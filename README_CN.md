@@ -2,7 +2,7 @@
 
 # claw-agent-dashboard
 
-用于监控和管理 [OpenClaw](https://github.com/anthropics/openclaw) AI 智能体的 Web 仪表盘。
+用于监控和管理 [OpenClaw](https://github.com/openclaw/openclaw) AI 智能体的 Web 仪表盘。
 
 <!-- ![截图](docs/screenshot.png) -->
 
@@ -28,7 +28,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/anthropics/claw-agent-dashboard.git
+git clone https://github.com/openclaw/claw-agent-dashboard.git
 cd claw-agent-dashboard
 
 # 2. 复制并编辑环境配置文件

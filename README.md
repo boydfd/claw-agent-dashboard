@@ -2,7 +2,7 @@
 
 # claw-agent-dashboard
 
-A web dashboard for monitoring and managing [OpenClaw](https://github.com/anthropics/openclaw) AI agents.
+A web dashboard for monitoring and managing [OpenClaw](https://github.com/openclaw/openclaw) AI agents.
 
 <!-- ![Screenshot](docs/screenshot.png) -->
 
@@ -28,7 +28,7 @@ A web dashboard for monitoring and managing [OpenClaw](https://github.com/anthro
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/anthropics/claw-agent-dashboard.git
+git clone https://github.com/openclaw/claw-agent-dashboard.git
 cd claw-agent-dashboard
 
 # 2. Copy and edit the environment file
