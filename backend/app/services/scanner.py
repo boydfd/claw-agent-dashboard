@@ -49,7 +49,8 @@ def list_agents() -> list[dict]:
 
     agents = []
     for entry in sorted(agents_dir.iterdir()):
-        if entry.is_dir() and entry.name.startswith("workspace-"):
+        # Match "workspace" (main agent) and "workspace-*" (named agents)
+        if entry.is_dir() and (entry.name == "workspace" or entry.name.startswith("workspace-")):
             agents.append({
                 "name": entry.name,
                 "display_name": _extract_display_name(entry),

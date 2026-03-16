@@ -617,12 +617,26 @@ def get_agent_detail(agent_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def get_all_agents_status() -> list:
-    """Get status summary for all agents."""
+    """Get status summary for all agents.
+    
+    Cross-references agents/*/sessions with workspace-* directories
+    to avoid showing orphaned session-only agents (e.g. stale data).
+    """
     agents_dir = Path(AGENTS_DIR) / "agents"
+    base_dir = Path(AGENTS_DIR)
     result = []
     if agents_dir.exists():
+        # Build set of valid agent ids from workspace directories
+        valid_agents = set()
+        for entry in base_dir.iterdir():
+            if entry.is_dir():
+                if entry.name == "workspace":
+                    valid_agents.add("main")
+                elif entry.name.startswith("workspace-"):
+                    valid_agents.add(entry.name.replace("workspace-", "", 1))
+
         for agent_dir in sorted(agents_dir.iterdir()):
-            if agent_dir.is_dir():
+            if agent_dir.is_dir() and agent_dir.name in valid_agents:
                 status = get_agent_status(f"agents/{agent_dir.name}")
                 status["agent_name"] = agent_dir.name
                 result.append(status)
