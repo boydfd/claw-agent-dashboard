@@ -26,3 +26,4 @@ works/
 works.md
 test-images/
 .claude/
+docker-compose.override.yml

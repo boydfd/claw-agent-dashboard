@@ -67,7 +67,7 @@ def get_system_metrics() -> dict:
 # ---------------------------------------------------------------------------
 
 def get_gateway_status() -> dict:
-    """Find the openclaw-gateway process and return its status."""
+    """Detect gateway status via API probe, enriched with /proc details when available."""
     result = {
         "running": False,
         "pid": None,
@@ -77,47 +77,63 @@ def get_gateway_status() -> dict:
         "state": "unknown",
     }
 
+    # Step 1: API health probe (cross-platform)
+    try:
+        resp = httpx.get(f"{GATEWAY_URL}/health", timeout=3.0)
+        data = resp.json()
+        if resp.status_code == 200 and data.get("ok") is True:
+            result["running"] = True
+            result["state"] = data.get("status", "live")
+    except Exception:
+        pass
+
+    if not result["running"]:
+        return result
+
+    # Step 2: /proc scan for enriched process details (Linux only)
     try:
         for pid_dir in Path(HOST_PROC).iterdir():
             if not pid_dir.name.isdigit():
                 continue
             try:
                 cmdline = (pid_dir / "cmdline").read_text()
-                if "openclaw-gateway" in cmdline or "openclaw" in cmdline:
-                    comm = (pid_dir / "comm").read_text().strip()
-                    if "openclaw" in comm.lower():
-                        pid = int(pid_dir.name)
-                        status_text = (pid_dir / "status").read_text()
-                        status = {}
-                        for line in status_text.splitlines():
-                            parts = line.split(":\t")
-                            if len(parts) == 2:
-                                status[parts[0].strip()] = parts[1].strip()
+                if "openclaw-gateway" not in cmdline and "openclaw" not in cmdline:
+                    continue
+                comm = (pid_dir / "comm").read_text().strip()
+                if "openclaw" not in comm.lower():
+                    continue
 
-                        rss_kb = int(status.get("VmRSS", "0 kB").split()[0])
-                        threads = int(status.get("Threads", "1"))
-                        state_raw = status.get("State", "? (unknown)")
-                        state = state_raw.split("(")[-1].rstrip(")") if "(" in state_raw else state_raw
+                pid = int(pid_dir.name)
+                status_text = (pid_dir / "status").read_text()
+                status = {}
+                for line in status_text.splitlines():
+                    parts = line.split(":\t")
+                    if len(parts) == 2:
+                        status[parts[0].strip()] = parts[1].strip()
 
-                        stat_text = (pid_dir / "stat").read_text()
-                        stat_after_comm = stat_text[stat_text.rfind(")") + 2:]
-                        fields = stat_after_comm.split()
-                        starttime_ticks = int(fields[19])
-                        clk_tck = os.sysconf("SC_CLK_TCK")
-                        with open(f"{HOST_PROC}/uptime") as f:
-                            system_uptime = float(f.read().split()[0])
-                        proc_start = starttime_ticks / clk_tck
-                        proc_uptime = system_uptime - proc_start
+                rss_kb = int(status.get("VmRSS", "0 kB").split()[0])
+                threads = int(status.get("Threads", "1"))
+                state_raw = status.get("State", "? (unknown)")
+                state = state_raw.split("(")[-1].rstrip(")") if "(" in state_raw else state_raw
 
-                        result = {
-                            "running": True,
-                            "pid": pid,
-                            "rss_mb": round(rss_kb / 1024),
-                            "uptime_seconds": round(proc_uptime),
-                            "threads": threads,
-                            "state": state,
-                        }
-                        break
+                stat_text = (pid_dir / "stat").read_text()
+                stat_after_comm = stat_text[stat_text.rfind(")") + 2:]
+                fields = stat_after_comm.split()
+                starttime_ticks = int(fields[19])
+                clk_tck = os.sysconf("SC_CLK_TCK")
+                with open(f"{HOST_PROC}/uptime") as f:
+                    system_uptime = float(f.read().split()[0])
+                proc_start = starttime_ticks / clk_tck
+                proc_uptime = system_uptime - proc_start
+
+                result.update({
+                    "pid": pid,
+                    "rss_mb": round(rss_kb / 1024),
+                    "uptime_seconds": round(proc_uptime),
+                    "threads": threads,
+                    "state": state,
+                })
+                break
             except (PermissionError, FileNotFoundError, ValueError, IndexError):
                 continue
     except Exception:
