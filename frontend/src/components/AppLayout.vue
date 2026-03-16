@@ -21,6 +21,14 @@
             <el-icon><Monitor /></el-icon>
             {{ t('app.agents') }}
           </router-link>
+          <router-link
+            to="/management"
+            class="nav-tab"
+            :class="{ active: isManagement }"
+          >
+            <el-icon><Setting /></el-icon>
+            {{ t('management.title') }}
+          </router-link>
         </nav>
       </div>
       <div class="header-right">
@@ -50,6 +58,7 @@ const { t, locale } = useI18n()
 
 const isDashboard = computed(() => route.path === '/dashboard')
 const isAgents = computed(() => route.path.startsWith('/agents'))
+const isManagement = computed(() => route.path.startsWith('/management'))
 
 // Sync <html lang> on initial load from saved locale
 onMounted(() => {

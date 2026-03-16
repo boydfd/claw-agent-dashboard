@@ -81,3 +81,24 @@ export const fetchVersionDiff = (agentName, filePath, fromId, toId) =>
   api.get(`/versions/${agentName}/${filePath}/diff`, { params: { from_version_id: fromId, to_version_id: toId } }).then(r => r.data)
 
 export default api
+
+// Variables
+export const fetchVariables = () => api.get('/variables').then(r => r.data)
+export const fetchAgentVariables = (agentId) => api.get(`/variables/agent/${agentId}`).then(r => r.data)
+export const createVariable = (data) => api.post('/variables', data).then(r => r.data)
+export const updateVariable = (id, data) => api.put(`/variables/${id}`, data).then(r => r.data)
+export const deleteVariable = (id, confirm = false) => api.delete(`/variables/${id}`, { params: { confirm } }).then(r => r.data)
+export const fetchVariableReferences = (id) => api.get(`/variables/${id}/references`).then(r => r.data)
+
+// Templates
+export const fetchAgentTemplates = (agentId) => api.get(`/templates/agent/${agentId}`).then(r => r.data)
+export const lookupTemplate = (agentId, filePath) => api.get('/templates/lookup', { params: { agent_id: agentId, file_path: filePath } }).then(r => r.data)
+export const fetchTemplate = (id) => api.get(`/templates/${id}`).then(r => r.data)
+export const fetchRenderedTemplate = (id) => api.get(`/templates/${id}/rendered`).then(r => r.data)
+export const updateTemplate = (id, content, commitMsg = null) => {
+  const body = { content }
+  if (commitMsg) body.commit_msg = commitMsg
+  return api.put(`/templates/${id}`, body).then(r => r.data)
+}
+export const applyTemplate = (id) => api.post(`/templates/${id}/apply`).then(r => r.data)
+export const batchApplyTemplates = (templateIds) => api.post('/templates/batch-apply', { template_ids: templateIds }).then(r => r.data)

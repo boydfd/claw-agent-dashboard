@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from ..services import scanner, file_service, version_service
+from ..services import scanner, file_service, version_service, version_db
 from ..services.translate import translation_exists
 
 router = APIRouter(tags=["agents"])
@@ -11,7 +11,11 @@ router = APIRouter(tags=["agents"])
 @router.get("/agents")
 async def list_agents():
     """List all discovered agents."""
-    return scanner.list_agents()
+    agents = scanner.list_agents()
+    # Attach database ID for each agent
+    for agent in agents:
+        agent["id"] = await version_db.get_or_create_agent(agent["name"])
+    return agents
 
 
 @router.get("/agents/{agent_name}/files")

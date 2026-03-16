@@ -25,6 +25,7 @@ import {
   restoreVersion as apiRestoreVersion,
   fetchVersionDiff as apiFetchVersionDiff,
 } from '../api'
+import { useTemplateStore } from './template'
 
 export const useAgentStore = defineStore('agent', () => {
   // State
@@ -155,6 +156,15 @@ export const useAgentStore = defineStore('agent', () => {
       } else {
         currentTranslation.value = null
       }
+      // Template layer: load template (lazy-creates if needed)
+      const templateStore = useTemplateStore()
+      if (currentAgent.value?.id) {
+        await templateStore.loadTemplate(currentAgent.value.id, currentFile.value.path)
+        // Use rendered content for preview display
+        currentFile.value.content = templateStore.renderedContent
+        // Template raw content for editing
+        editContent.value = templateStore.currentTemplate?.content || currentFile.value.content
+      }
     } finally {
       loading.value = false
     }
@@ -180,9 +190,16 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function startEditing() {
-    const content = showTranslation.value && currentTranslation.value
-      ? currentTranslation.value.content
-      : currentFile.value?.content || ''
+    const templateStore = useTemplateStore()
+    let content
+    if (templateStore.currentTemplate) {
+      // Template mode: edit raw template with ${VAR} placeholders
+      content = templateStore.currentTemplate.content
+    } else if (showTranslation.value && currentTranslation.value) {
+      content = currentTranslation.value.content
+    } else {
+      content = currentFile.value?.content || ''
+    }
     editContent.value = content
     isEditing.value = true
   }
@@ -195,6 +212,13 @@ export const useAgentStore = defineStore('agent', () => {
     if (!currentAgent.value || !currentFile.value) return
     saving.value = true
     try {
+      const templateStore = useTemplateStore()
+      if (templateStore.currentTemplate) {
+        await templateStore.saveTemplate(editContent.value, commitMsg)
+        currentFile.value.content = templateStore.renderedContent
+        return true
+      }
+      // else: fallback to existing direct save for global files
       await apiSaveFile(currentAgent.value.name, currentFile.value.path, editContent.value, commitMsg)
       // Update the in-memory content
       currentFile.value.content = editContent.value
@@ -233,6 +257,8 @@ export const useAgentStore = defineStore('agent', () => {
     showTranslation.value = false
     isEditing.value = false
     try {
+      const templateStore = useTemplateStore()
+      templateStore.clearTemplate()
       currentFile.value = await fetchGlobalSkillFileContent(source, path)
       currentFile.value._globalSource = source
       editContent.value = currentFile.value.content

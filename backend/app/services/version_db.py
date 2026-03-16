@@ -62,6 +62,41 @@ async def init_db():
             last_scanned  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(agent_id, file_path)
         );
+
+        CREATE TABLE IF NOT EXISTS variables (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            value       TEXT NOT NULL,
+            type        TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'secret')),
+            scope       TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'agent')),
+            agent_id    INTEGER REFERENCES agents(id),
+            description TEXT,
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CHECK((scope = 'global' AND agent_id IS NULL) OR (scope = 'agent' AND agent_id IS NOT NULL))
+        );
+
+        CREATE TABLE IF NOT EXISTS templates (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id         INTEGER NOT NULL REFERENCES agents(id),
+            file_path        TEXT NOT NULL,
+            content          TEXT NOT NULL,
+            base_template_id INTEGER,
+            created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(agent_id, file_path)
+        );
+    """)
+    await db.commit()
+
+    # Partial unique indexes for variables (added after executescript)
+    await db.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_variables_global_unique
+            ON variables(name) WHERE scope = 'global'
+    """)
+    await db.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_variables_agent_unique
+            ON variables(name, agent_id) WHERE scope = 'agent'
     """)
     await db.commit()
 
@@ -221,3 +256,149 @@ async def get_all_tracked_files(agent_id: int) -> list[dict]:
     )
     rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Variable CRUD
+# ---------------------------------------------------------------------------
+
+
+async def list_variables(scope: str = None, agent_id: int = None) -> list[dict]:
+    """List variables, optionally filtered by scope and/or agent_id."""
+    db = await get_db()
+    if scope == "agent" and agent_id is not None:
+        cursor = await db.execute(
+            "SELECT * FROM variables WHERE scope = 'agent' AND agent_id = ? ORDER BY name",
+            (agent_id,),
+        )
+    elif scope == "global":
+        cursor = await db.execute(
+            "SELECT * FROM variables WHERE scope = 'global' ORDER BY name"
+        )
+    else:
+        cursor = await db.execute("SELECT * FROM variables ORDER BY scope, name")
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+async def get_variable(variable_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM variables WHERE id = ?", (variable_id,))
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def create_variable(name: str, value: str, var_type: str = "text",
+                          scope: str = "global", agent_id: int = None,
+                          description: str = None) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        """INSERT INTO variables (name, value, type, scope, agent_id, description)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (name, value, var_type, scope, agent_id, description),
+    )
+    await db.commit()
+    return await get_variable(cursor.lastrowid)
+
+
+async def update_variable(variable_id: int, **fields) -> dict | None:
+    db = await get_db()
+    sets = []
+    vals = []
+    for key in ("name", "value", "type", "scope", "agent_id", "description"):
+        if key in fields:
+            sets.append(f"{key} = ?")
+            vals.append(fields[key])
+    if not sets:
+        return await get_variable(variable_id)
+    sets.append("updated_at = CURRENT_TIMESTAMP")
+    vals.append(variable_id)
+    await db.execute(
+        f"UPDATE variables SET {', '.join(sets)} WHERE id = ?", vals
+    )
+    await db.commit()
+    return await get_variable(variable_id)
+
+
+async def delete_variable(variable_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute("DELETE FROM variables WHERE id = ?", (variable_id,))
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Template CRUD
+# ---------------------------------------------------------------------------
+
+
+async def get_template(template_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM templates WHERE id = ?", (template_id,))
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def get_template_by_path(agent_id: int, file_path: str) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM templates WHERE agent_id = ? AND file_path = ?",
+        (agent_id, file_path),
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def list_templates(agent_id: int = None) -> list[dict]:
+    db = await get_db()
+    if agent_id is not None:
+        cursor = await db.execute(
+            "SELECT * FROM templates WHERE agent_id = ? ORDER BY file_path",
+            (agent_id,),
+        )
+    else:
+        cursor = await db.execute("SELECT * FROM templates ORDER BY agent_id, file_path")
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+async def create_template(agent_id: int, file_path: str, content: str,
+                          base_template_id: int = None) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        """INSERT INTO templates (agent_id, file_path, content, base_template_id)
+           VALUES (?, ?, ?, ?)""",
+        (agent_id, file_path, content, base_template_id),
+    )
+    await db.commit()
+    return await get_template(cursor.lastrowid)
+
+
+async def update_template(template_id: int, content: str) -> dict | None:
+    db = await get_db()
+    await db.execute(
+        "UPDATE templates SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (content, template_id),
+    )
+    await db.commit()
+    return await get_template(template_id)
+
+
+async def delete_template(template_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute("DELETE FROM templates WHERE id = ?", (template_id,))
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def find_templates_referencing_variable(var_name: str) -> list[dict]:
+    """Find all templates whose content contains ${var_name}."""
+    db = await get_db()
+    pattern = f"${{{var_name}}}"
+    cursor = await db.execute(
+        """SELECT t.*, a.workspace_name as agent_workspace_name
+           FROM templates t
+           JOIN agents a ON t.agent_id = a.id
+           WHERE t.content LIKE ?
+           ORDER BY a.workspace_name, t.file_path""",
+        (f"%{pattern}%",),
+    )
+    return [dict(row) for row in await cursor.fetchall()]
