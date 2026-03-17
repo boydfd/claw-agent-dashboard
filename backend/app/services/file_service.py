@@ -245,6 +245,63 @@ def write_file(agent_name: str, rel_path: str, content: str) -> dict:
     }
 
 
+def create_file(agent_name: str, rel_path: str, content: str) -> dict:
+    """Create a new file in the agent workspace (supports non-existing paths).
+    Creates parent directories as needed. Used by derive flow."""
+    agent_dir = _agent_path(agent_name)
+
+    # Ensure agent directory exists
+    agent_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = agent_dir / rel_path
+
+    # Security: ensure path doesn't escape agent directory
+    try:
+        file_path = file_path.resolve()
+        agent_dir_resolved = agent_dir.resolve()
+        if not str(file_path).startswith(str(agent_dir_resolved)):
+            raise PermissionError("Path traversal not allowed")
+    except PermissionError:
+        raise
+    except Exception:
+        raise ValueError(f"Invalid path: {rel_path}")
+
+    # Create parent directories
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_path.write_text(content, encoding="utf-8")
+
+    host_path = str(Path(AGENTS_HOST_DIR) / agent_name / rel_path)
+    return {
+        "path": rel_path,
+        "name": file_path.name,
+        "host_path": host_path,
+        "created": True,
+    }
+
+
+def delete_file(agent_name: str, rel_path: str) -> bool:
+    """Delete a file from the agent workspace."""
+    agent_dir = _agent_path(agent_name)
+    file_path = agent_dir / rel_path
+
+    # Security: ensure path doesn't escape agent directory
+    try:
+        file_path = file_path.resolve()
+        agent_dir_resolved = agent_dir.resolve()
+        if not str(file_path).startswith(str(agent_dir_resolved)):
+            raise PermissionError("Path traversal not allowed")
+    except PermissionError:
+        raise
+    except Exception:
+        raise ValueError(f"Invalid path: {rel_path}")
+
+    if file_path.exists() and file_path.is_file():
+        file_path.unlink()
+        return True
+    return False
+
+
 def read_file(agent_name: str, rel_path: str) -> dict | None:
     """Read a file and return its content with metadata."""
     agent_dir = _agent_path(agent_name)

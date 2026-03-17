@@ -85,6 +85,7 @@ export default api
 // Variables
 export const fetchVariables = () => api.get('/variables').then(r => r.data)
 export const fetchAgentVariables = (agentId) => api.get(`/variables/agent/${agentId}`).then(r => r.data)
+export const fetchVariablesByScope = (scope, agentId) => api.get('/variables', { params: { scope, agent_id: agentId } }).then(r => r.data)
 export const createVariable = (data) => api.post('/variables', data).then(r => r.data)
 export const updateVariable = (id, data) => api.put(`/variables/${id}`, data).then(r => r.data)
 export const deleteVariable = (id, confirm = false) => api.delete(`/variables/${id}`, { params: { confirm } }).then(r => r.data)
@@ -102,3 +103,26 @@ export const updateTemplate = (id, content, commitMsg = null) => {
 }
 export const applyTemplate = (id) => api.post(`/templates/${id}/apply`).then(r => r.data)
 export const batchApplyTemplates = (templateIds) => api.post('/templates/batch-apply', { template_ids: templateIds }).then(r => r.data)
+
+// Blueprints
+export const fetchBlueprints = () => api.get('/blueprints').then(r => r.data)
+export const createBlueprint = (data) => api.post('/blueprints', data).then(r => r.data)
+export const fetchBlueprint = (id) => api.get(`/blueprints/${id}`).then(r => r.data)
+export const updateBlueprint = (id, data) => api.put(`/blueprints/${id}`, data).then(r => r.data)
+export const deleteBlueprint = (id, confirm = false) => api.delete(`/blueprints/${id}`, { params: { confirm } }).then(r => r.data)
+
+// Blueprint files
+export const fetchBlueprintFiles = (id) => api.get(`/blueprints/${id}/files`).then(r => r.data)
+export const addBlueprintFile = (id, data) => api.post(`/blueprints/${id}/files`, data).then(r => r.data)
+export const fetchBlueprintFile = (id, filePath) => api.get(`/blueprints/${id}/files/${filePath}`).then(r => r.data)
+export const updateBlueprintFile = (id, filePath, content) => api.put(`/blueprints/${id}/files/${filePath}`, { content }).then(r => r.data)
+export const deleteBlueprintFile = (id, filePath) => api.delete(`/blueprints/${id}/files/${filePath}`).then(r => r.data)
+
+// Blueprint variables and derivations
+export const fetchBlueprintVariables = (id) => api.get(`/blueprints/${id}/variables`).then(r => r.data)
+export const fetchBlueprintDerivations = (id) => api.get(`/blueprints/${id}/derivations`).then(r => r.data)
+export const deriveAgent = (id, data) => api.post(`/blueprints/${id}/derive`, data).then(r => r.data)
+
+// Agent derivation status
+export const fetchDerivationStatus = (agentName) => api.get(`/agents/${agentName}/derivation-status`).then(r => r.data)
+export const resyncFile = (agentName, filePath) => api.post(`/agents/${agentName}/files/${filePath}/resync`).then(r => r.data)

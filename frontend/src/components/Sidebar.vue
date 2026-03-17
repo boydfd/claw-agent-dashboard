@@ -74,6 +74,11 @@
 
         <!-- Agent files + skills + memory + other files (when expanded) -->
         <div v-if="store.currentAgent?.name === agent.name" class="agent-content">
+          <!-- Blueprint derivation badge -->
+          <span v-if="store.derivationStatus?.is_derived" class="derived-badge">
+            🔗 {{ t('management.derivedFrom', { name: store.derivationStatus.blueprint_name }) }}
+          </span>
+
           <!-- Core files -->
           <div class="section-label">{{ t('sidebar.coreFiles') }}</div>
           <div
@@ -92,6 +97,8 @@
             <div class="file-item-content" @click="store.selectFile(file.path)">
               <el-icon><Document /></el-icon>
               <span>{{ file.name }}</span>
+              <span v-if="store.isFileSynced(file.path) === true" class="sync-icon synced" title="Synced">🔗</span>
+              <span v-else-if="store.isFileSynced(file.path) === false" class="sync-icon overridden" title="Overridden">✏️</span>
               <el-tag v-if="file.has_translation" size="small" type="success" class="trans-tag">{{ t('sidebar.translated') }}</el-tag>
             </div>
           </div>
@@ -460,5 +467,26 @@ async function toggleGlobalSkill(source, skillName) {
 }
 .dot-unknown {
   background: #dcdfe6;
+}
+
+.derived-badge {
+  display: block;
+  font-size: 11px;
+  color: var(--el-color-primary);
+  padding: 4px 8px;
+  margin-bottom: 4px;
+}
+
+.sync-icon {
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+.sync-icon.synced {
+  opacity: 0.5;
+}
+
+.sync-icon.overridden {
+  color: var(--el-color-warning);
 }
 </style>

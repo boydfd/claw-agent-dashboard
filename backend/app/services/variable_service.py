@@ -48,6 +48,27 @@ async def get_raw_variables_for_agent(agent_id: int) -> dict[str, str]:
     return result
 
 
+async def get_raw_variables_for_derived_agent(
+    agent_id: int, blueprint_agent_id: int
+) -> dict[str, str]:
+    """Get effective variable name->value mapping for a derived agent.
+    Priority: agent-scoped > blueprint-scoped > global."""
+    global_vars = await version_db.list_variables(scope="global")
+    blueprint_vars = await version_db.list_variables(
+        scope="blueprint", agent_id=blueprint_agent_id
+    )
+    agent_vars = await version_db.list_variables(scope="agent", agent_id=agent_id)
+
+    result = {}
+    for v in global_vars:
+        result[v["name"]] = v["value"]
+    for v in blueprint_vars:
+        result[v["name"]] = v["value"]
+    for v in agent_vars:
+        result[v["name"]] = v["value"]
+    return result
+
+
 async def create_variable(name: str, value: str, var_type: str = "text",
                           scope: str = "global", agent_id: int = None,
                           description: str = None) -> dict:

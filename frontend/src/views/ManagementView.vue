@@ -13,6 +13,7 @@
     </div>
     <div class="management-content">
       <VariablesPanel v-if="activeTab === 'variables'" />
+      <BlueprintsPanel v-else-if="activeTab === 'blueprints'" />
       <div v-else class="coming-soon">
         <p>{{ t('management.comingSoon') }}</p>
       </div>
@@ -24,12 +25,13 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import VariablesPanel from '../components/VariablesPanel.vue'
+import BlueprintsPanel from '../components/BlueprintsPanel.vue'
 
 const { t } = useI18n()
 const activeTab = ref('variables')
 const tabs = [
   { key: 'variables' },
-  { key: 'templates' },
+  { key: 'blueprints' },
   { key: 'skills' },
 ]
 </script>

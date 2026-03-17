@@ -78,6 +78,11 @@ async def save_file(agent_name: str, path: str = Query(...), body: SaveFileReque
         version = await version_service.save_file_with_version(
             agent_name, path, body.content, body.commit_msg
         )
+        # Auto-override: if this agent is derived, mark file as overridden
+        agent_id = await version_db.get_or_create_agent(agent_name)
+        derivation = await version_db.get_derivation_by_agent_id(agent_id)
+        if derivation:
+            await version_db.add_override(derivation["id"], path)
         return {
             "path": path,
             "name": path.split("/")[-1],
@@ -90,3 +95,39 @@ async def save_file(agent_name: str, path: str = Query(...), body: SaveFileReque
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Save failed: {str(e)}")
+
+
+@router.get("/agents/{agent_name}/derivation-status")
+async def get_derivation_status(agent_name: str):
+    """Get blueprint derivation info for an agent."""
+    from ..services import blueprint_service
+    # Use read-only lookup — do NOT create an agent record for a status query
+    db = await version_db.get_db()
+    cursor = await db.execute(
+        "SELECT id FROM agents WHERE workspace_name = ?", (agent_name,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return {"is_derived": False}
+    status = await blueprint_service.get_derivation_status(row["id"])
+    if not status:
+        return {"is_derived": False}
+    return status
+
+
+@router.post("/agents/{agent_name}/files/{file_path:path}/resync")
+async def resync_file(agent_name: str, file_path: str):
+    """Restore a file to blueprint sync."""
+    from ..services import blueprint_service
+    # Use read-only lookup — agent must already exist for resync
+    db = await version_db.get_db()
+    cursor = await db.execute(
+        "SELECT id FROM agents WHERE workspace_name = ?", (agent_name,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "Agent not found")
+    try:
+        return await blueprint_service.resync_file(row["id"], file_path)
+    except ValueError as e:
+        raise HTTPException(404, str(e))

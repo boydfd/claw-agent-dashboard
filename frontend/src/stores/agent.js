@@ -59,6 +59,9 @@ export const useAgentStore = defineStore('agent', () => {
   const batchTranslating = ref(false)
   const batchProgress = ref({ current: 0, total: 0 })
 
+  // Derivation status
+  const derivationStatus = ref(null)  // { is_derived, blueprint_name, files: [...] }
+
   // Status dashboard
   const agentDetail = ref(null)
   const statusLoading = ref(false)
@@ -110,6 +113,8 @@ export const useAgentStore = defineStore('agent', () => {
       skillFilesMap.value = {}
       // Load agent detail
       await loadAgentDetail()
+      // Load derivation status
+      await loadDerivationStatus()
     } finally {
       loading.value = false
     }
@@ -343,6 +348,33 @@ export const useAgentStore = defineStore('agent', () => {
       batchTranslating.value = false
       selectedFiles.value = new Set()
     }
+  }
+
+  // Derivation status actions
+  async function loadDerivationStatus() {
+    if (!currentAgent.value) {
+      derivationStatus.value = null
+      return
+    }
+    try {
+      const { fetchDerivationStatus } = await import('../api')
+      derivationStatus.value = await fetchDerivationStatus(currentAgent.value.name)
+    } catch {
+      derivationStatus.value = null
+    }
+  }
+
+  function isFileOverridden(filePath) {
+    if (!derivationStatus.value?.is_derived) return false
+    const file = derivationStatus.value.files?.find(f => f.file_path === filePath)
+    return file?.is_overridden || false
+  }
+
+  function isFileSynced(filePath) {
+    if (!derivationStatus.value?.is_derived) return null  // not derived
+    const file = derivationStatus.value.files?.find(f => f.file_path === filePath)
+    if (!file) return null  // file not in blueprint
+    return !file.is_overridden
   }
 
   // Status dashboard actions
@@ -692,5 +724,10 @@ export const useAgentStore = defineStore('agent', () => {
     fetchDiff,
     openVersionDrawer,
     closeVersionDrawer,
+    // Derivation status
+    derivationStatus,
+    loadDerivationStatus,
+    isFileOverridden,
+    isFileSynced,
   }
 })

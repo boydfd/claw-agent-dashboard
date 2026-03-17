@@ -25,9 +25,10 @@ class VariableUpdate(BaseModel):
 
 
 @router.get("")
-async def list_variables():
-    """List all variables (secrets masked)."""
-    return await variable_service.list_all_variables()
+async def list_variables(scope: str = None, agent_id: int = None):
+    """List all variables, optionally filtered by scope and agent_id."""
+    variables = await vdb.list_variables(scope=scope, agent_id=agent_id)
+    return [variable_service.mask_variable(v) for v in variables]
 
 
 @router.get("/agent/{agent_id}")
@@ -52,7 +53,7 @@ async def create_variable(body: VariableCreate):
 
 @router.put("/{variable_id}")
 async def update_variable(variable_id: int, body: VariableUpdate):
-    """Update a variable. Returns affected templates for linkage confirmation."""
+    """Update a variable. Returns affected templates. Triggers blueprint sync if blueprint-scoped."""
     try:
         fields = {k: v for k, v in body.model_dump().items() if v is not None}
         variable = await variable_service.update_variable(variable_id, **fields)
@@ -60,6 +61,16 @@ async def update_variable(variable_id: int, body: VariableUpdate):
         # Find affected templates
         var_raw = await vdb.get_variable(variable_id)
         affected = await variable_service.find_affected_templates(var_raw["name"]) if var_raw else []
+
+        # Blueprint sync trigger: if this is a blueprint-scoped variable, re-sync all derived agents
+        if var_raw and var_raw["scope"] == "blueprint":
+            from ..services import blueprint_service
+            bp = await vdb.get_blueprint_by_agent_id(var_raw["agent_id"])
+            if bp:
+                # Re-sync all blueprint files to all derived agents
+                derivations = await vdb.list_derivations(bp["id"])
+                for d in derivations:
+                    await blueprint_service.sync_all_files_to_agent(bp, d["agent_id"], d["id"])
 
         return {"variable": variable, "affected_templates": affected}
     except ValueError as e:

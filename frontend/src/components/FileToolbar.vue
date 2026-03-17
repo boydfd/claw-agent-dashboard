@@ -7,6 +7,21 @@
       <el-tag v-else size="small" type="info">{{ t('fileToolbar.original') }}</el-tag>
     </div>
     <div class="toolbar-right">
+      <!-- Resync from Blueprint button (for overridden files in derived agents) -->
+      <el-popconfirm
+        v-if="store.derivationStatus?.is_derived && store.isFileOverridden(store.currentFile?.path)"
+        :title="t('management.resyncConfirm', { file: store.currentFile?.name })"
+        :confirm-button-text="t('management.confirmResync')"
+        :cancel-button-text="t('common.cancel')"
+        @confirm="doResync"
+      >
+        <template #reference>
+          <el-button size="small" type="warning" :icon="Refresh">
+            {{ t('management.resyncFromBlueprint') }}
+          </el-button>
+        </template>
+      </el-popconfirm>
+
       <!-- Batch translate button -->
       <el-button
         v-if="store.selectedFiles.size > 0"
@@ -114,8 +129,9 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Document, EditPen, View, DocumentCopy, MagicStick, Upload, Clock } from '@element-plus/icons-vue'
+import { Document, EditPen, View, DocumentCopy, MagicStick, Upload, Clock, Refresh } from '@element-plus/icons-vue'
 import { useAgentStore } from '../stores/agent'
+import { resyncFile } from '../api'
 
 const { t } = useI18n()
 const store = useAgentStore()
@@ -158,6 +174,18 @@ async function copyContent() {
     document.execCommand('copy')
     document.body.removeChild(ta)
     ElMessage.success(t('fileToolbar.copiedToClipboard'))
+  }
+}
+
+async function doResync() {
+  try {
+    await resyncFile(store.currentAgent.name, store.currentFile.path)
+    ElMessage.success(t('management.resyncSuccess'))
+    // Reload file content and derivation status
+    await store.selectFile(store.currentFile.path)
+    await store.loadDerivationStatus()
+  } catch (e) {
+    ElMessage.error(t('management.resyncFailed'))
   }
 }
 </script>

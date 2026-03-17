@@ -68,12 +68,12 @@ async def init_db():
             name        TEXT NOT NULL,
             value       TEXT NOT NULL,
             type        TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'secret')),
-            scope       TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'agent')),
+            scope       TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'agent', 'blueprint')),
             agent_id    INTEGER REFERENCES agents(id),
             description TEXT,
             created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            CHECK((scope = 'global' AND agent_id IS NULL) OR (scope = 'agent' AND agent_id IS NOT NULL))
+            CHECK((scope = 'global' AND agent_id IS NULL) OR (scope IN ('agent', 'blueprint') AND agent_id IS NOT NULL))
         );
 
         CREATE TABLE IF NOT EXISTS templates (
@@ -85,6 +85,31 @@ async def init_db():
             created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(agent_id, file_path)
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_blueprints (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL UNIQUE,
+            description TEXT,
+            agent_id    INTEGER NOT NULL REFERENCES agents(id),
+            parent_id   INTEGER REFERENCES agent_blueprints(id),
+            created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_derivations (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            blueprint_id  INTEGER NOT NULL REFERENCES agent_blueprints(id),
+            agent_id      INTEGER NOT NULL UNIQUE REFERENCES agents(id),
+            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS derivation_overrides (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            derivation_id  INTEGER NOT NULL REFERENCES agent_derivations(id),
+            file_path      TEXT NOT NULL,
+            overridden_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(derivation_id, file_path)
         );
     """)
     await db.commit()
@@ -98,7 +123,62 @@ async def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS idx_variables_agent_unique
             ON variables(name, agent_id) WHERE scope = 'agent'
     """)
+    await db.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_variables_blueprint_unique
+            ON variables(name, agent_id) WHERE scope = 'blueprint'
+    """)
     await db.commit()
+
+    # Migration: add is_virtual to agents table
+    try:
+        await db.execute(
+            "ALTER TABLE agents ADD COLUMN is_virtual BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+        await db.commit()
+    except Exception:
+        pass  # Column already exists
+
+    # Migration: recreate variables table with blueprint scope support
+    # Uses explicit BEGIN/COMMIT to ensure atomicity (executescript auto-commits each statement otherwise)
+    try:
+        cursor = await db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='variables'"
+        )
+        row = await cursor.fetchone()
+        if row and "'blueprint'" not in row["sql"]:
+            # Need to recreate with new CHECK constraint
+            await db.executescript("""
+                BEGIN;
+                CREATE TABLE IF NOT EXISTS variables_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name        TEXT NOT NULL,
+                    value       TEXT NOT NULL,
+                    type        TEXT NOT NULL DEFAULT 'text' CHECK(type IN ('text', 'secret')),
+                    scope       TEXT NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'agent', 'blueprint')),
+                    agent_id    INTEGER REFERENCES agents(id),
+                    description TEXT,
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CHECK((scope = 'global' AND agent_id IS NULL) OR (scope IN ('agent', 'blueprint') AND agent_id IS NOT NULL))
+                );
+                INSERT OR IGNORE INTO variables_new SELECT * FROM variables;
+                DROP TABLE variables;
+                ALTER TABLE variables_new RENAME TO variables;
+                COMMIT;
+            """)
+            # Recreate indexes dropped with the old table
+            await db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_variables_global_unique
+                    ON variables(name) WHERE scope = 'global'
+            """)
+            await db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_variables_agent_unique
+                    ON variables(name, agent_id) WHERE scope = 'agent'
+            """)
+            await db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Variables migration: {e}")
 
 
 async def close_db():
@@ -266,10 +346,10 @@ async def get_all_tracked_files(agent_id: int) -> list[dict]:
 async def list_variables(scope: str = None, agent_id: int = None) -> list[dict]:
     """List variables, optionally filtered by scope and/or agent_id."""
     db = await get_db()
-    if scope == "agent" and agent_id is not None:
+    if scope in ("agent", "blueprint") and agent_id is not None:
         cursor = await db.execute(
-            "SELECT * FROM variables WHERE scope = 'agent' AND agent_id = ? ORDER BY name",
-            (agent_id,),
+            "SELECT * FROM variables WHERE scope = ? AND agent_id = ? ORDER BY name",
+            (scope, agent_id),
         )
     elif scope == "global":
         cursor = await db.execute(
@@ -402,3 +482,216 @@ async def find_templates_referencing_variable(var_name: str) -> list[dict]:
         (f"%{pattern}%",),
     )
     return [dict(row) for row in await cursor.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Virtual Agent helper
+# ---------------------------------------------------------------------------
+
+
+async def get_or_create_virtual_agent(workspace_name: str) -> int:
+    """Get or create a virtual agent record (for blueprints)."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT id FROM agents WHERE workspace_name = ?", (workspace_name,)
+    )
+    row = await cursor.fetchone()
+    if row:
+        return row["id"]
+    cursor = await db.execute(
+        "INSERT INTO agents (workspace_name, is_virtual) VALUES (?, TRUE)",
+        (workspace_name,),
+    )
+    await db.commit()
+    return cursor.lastrowid
+
+
+# ---------------------------------------------------------------------------
+# Blueprint CRUD
+# ---------------------------------------------------------------------------
+
+
+async def create_blueprint(name: str, description: str, agent_id: int,
+                           parent_id: int = None) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        """INSERT INTO agent_blueprints (name, description, agent_id, parent_id)
+           VALUES (?, ?, ?, ?)""",
+        (name, description, agent_id, parent_id),
+    )
+    await db.commit()
+    return await get_blueprint(cursor.lastrowid)
+
+
+async def get_blueprint(blueprint_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_blueprints WHERE id = ?", (blueprint_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def get_blueprint_by_agent_id(agent_id: int) -> dict | None:
+    """Get blueprint that owns this virtual agent_id."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_blueprints WHERE agent_id = ?", (agent_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def list_blueprints() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        """SELECT b.*, COUNT(d.id) as derivation_count
+           FROM agent_blueprints b
+           LEFT JOIN agent_derivations d ON d.blueprint_id = b.id
+           GROUP BY b.id
+           ORDER BY b.name"""
+    )
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+async def update_blueprint(blueprint_id: int, **fields) -> dict | None:
+    db = await get_db()
+    sets = []
+    vals = []
+    for key in ("name", "description"):
+        if key in fields:
+            sets.append(f"{key} = ?")
+            vals.append(fields[key])
+    if not sets:
+        return await get_blueprint(blueprint_id)
+    sets.append("updated_at = CURRENT_TIMESTAMP")
+    vals.append(blueprint_id)
+    await db.execute(
+        f"UPDATE agent_blueprints SET {', '.join(sets)} WHERE id = ?", vals
+    )
+    await db.commit()
+    return await get_blueprint(blueprint_id)
+
+
+async def delete_blueprint(blueprint_id: int) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM agent_blueprints WHERE id = ?", (blueprint_id,)
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Derivation CRUD
+# ---------------------------------------------------------------------------
+
+
+async def create_derivation(blueprint_id: int, agent_id: int) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        "INSERT INTO agent_derivations (blueprint_id, agent_id) VALUES (?, ?)",
+        (blueprint_id, agent_id),
+    )
+    await db.commit()
+    return await get_derivation(cursor.lastrowid)
+
+
+async def get_derivation(derivation_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_derivations WHERE id = ?", (derivation_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def get_derivation_by_agent_id(agent_id: int) -> dict | None:
+    """Check if an agent is derived from a blueprint."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM agent_derivations WHERE agent_id = ?", (agent_id,)
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def list_derivations(blueprint_id: int) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        """SELECT d.*, a.workspace_name
+           FROM agent_derivations d
+           JOIN agents a ON d.agent_id = a.id
+           WHERE d.blueprint_id = ?
+           ORDER BY d.created_at""",
+        (blueprint_id,),
+    )
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# Override CRUD
+# ---------------------------------------------------------------------------
+
+
+async def add_override(derivation_id: int, file_path: str) -> dict:
+    db = await get_db()
+    cursor = await db.execute(
+        """INSERT OR IGNORE INTO derivation_overrides (derivation_id, file_path)
+           VALUES (?, ?)""",
+        (derivation_id, file_path),
+    )
+    await db.commit()
+    return {"derivation_id": derivation_id, "file_path": file_path}
+
+
+async def remove_override(derivation_id: int, file_path: str) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM derivation_overrides WHERE derivation_id = ? AND file_path = ?",
+        (derivation_id, file_path),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def list_overrides(derivation_id: int) -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM derivation_overrides WHERE derivation_id = ? ORDER BY file_path",
+        (derivation_id,),
+    )
+    return [dict(row) for row in await cursor.fetchall()]
+
+
+async def is_file_overridden(derivation_id: int, file_path: str) -> bool:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT 1 FROM derivation_overrides WHERE derivation_id = ? AND file_path = ?",
+        (derivation_id, file_path),
+    )
+    return await cursor.fetchone() is not None
+
+
+async def delete_derivations_for_blueprint(blueprint_id: int) -> int:
+    """Delete all derivation records (and their overrides) for a blueprint."""
+    db = await get_db()
+    # First get all derivation ids
+    cursor = await db.execute(
+        "SELECT id FROM agent_derivations WHERE blueprint_id = ?", (blueprint_id,)
+    )
+    derivation_ids = [row["id"] for row in await cursor.fetchall()]
+    if not derivation_ids:
+        return 0
+    # Delete overrides for all derivations
+    placeholders = ",".join("?" * len(derivation_ids))
+    await db.execute(
+        f"DELETE FROM derivation_overrides WHERE derivation_id IN ({placeholders})",
+        derivation_ids,
+    )
+    # Then delete derivations
+    cursor = await db.execute(
+        "DELETE FROM agent_derivations WHERE blueprint_id = ?", (blueprint_id,)
+    )
+    await db.commit()
+    return cursor.rowcount
