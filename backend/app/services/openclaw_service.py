@@ -113,9 +113,14 @@ async def restart_gateway() -> dict:
             "stderr": result.stderr,
         }
     except FileNotFoundError:
-        # Try full path
-        openclaw_path = "/home/vagrant/.npm-global/bin/openclaw"
-        if os.path.exists(openclaw_path):
+        # Try common install locations as fallback
+        common_paths = [
+            "/usr/local/bin/openclaw",
+            os.path.expanduser("~/.npm-global/bin/openclaw"),
+            os.path.expanduser("~/.local/bin/openclaw"),
+        ]
+        openclaw_path = next((p for p in common_paths if os.path.exists(p)), None)
+        if openclaw_path:
             result = subprocess.run(
                 [openclaw_path, "gateway", "restart"],
                 capture_output=True, text=True, timeout=30,

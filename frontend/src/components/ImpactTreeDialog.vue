@@ -69,7 +69,7 @@ const isDelete = computed(() => store.impactData?.mode === 'delete')
 
 const impactMessage = computed(() => {
   const varName = store.impactData?.variable?.name || ''
-  const displayName = '${' + varName + '}'
+  const displayName = '!{' + varName + '}'
   const key = isDelete.value ? 'management.impactDeleteMessage' : 'management.impactMessage'
   return t(key, { name: displayName })
 })

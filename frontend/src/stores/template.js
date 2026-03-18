@@ -11,14 +11,16 @@ export const useTemplateStore = defineStore('template', () => {
   const renderedContent = ref('')
   const renderWarnings = ref([])
   const templateLoading = ref(false)
+  const _agentId = ref(null)
 
   async function loadTemplate(agentId, filePath) {
     templateLoading.value = true
+    _agentId.value = agentId
     try {
       const template = await lookupTemplate(agentId, filePath)
       currentTemplate.value = template
 
-      const rendered = await fetchRenderedTemplate(template.id)
+      const rendered = await fetchRenderedTemplate(template.id, agentId)
       renderedContent.value = rendered.content
       renderWarnings.value = rendered.warnings || []
 
@@ -33,7 +35,7 @@ export const useTemplateStore = defineStore('template', () => {
     const updated = await apiUpdate(currentTemplate.value.id, content, commitMsg)
     currentTemplate.value = updated
 
-    const rendered = await fetchRenderedTemplate(updated.id)
+    const rendered = await fetchRenderedTemplate(updated.id, _agentId.value)
     renderedContent.value = rendered.content
     renderWarnings.value = rendered.warnings || []
 
@@ -44,6 +46,7 @@ export const useTemplateStore = defineStore('template', () => {
     currentTemplate.value = null
     renderedContent.value = ''
     renderWarnings.value = []
+    _agentId.value = null
   }
 
   return {

@@ -1,12 +1,35 @@
 """Blueprint service — CRUD, derive, sync orchestration."""
 import fnmatch
 import logging
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 from . import version_db, file_service, variable_service
 from .template_engine import render_template, extract_variable_names
 
 logger = logging.getLogger(__name__)
+
+
+async def initialize_blueprint_dirs():
+    """On startup: materialize DB blueprint templates to disk if directories don't exist."""
+    from ..config import BLUEPRINTS_DIR
+
+    bp_dir = Path(BLUEPRINTS_DIR)
+    bp_dir.mkdir(parents=True, exist_ok=True)
+
+    blueprints = await version_db.list_blueprints()
+    for bp in blueprints:
+        target_dir = bp_dir / bp["name"]
+        if target_dir.exists():
+            continue  # Already exists, will be handled by change detection
+
+        # Create directory and write all template files
+        target_dir.mkdir(parents=True, exist_ok=True)
+        templates = await version_db.list_templates(agent_id=bp["agent_id"])
+        for t in templates:
+            file_path = target_dir / t["file_path"]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(t["content"], encoding="utf-8")
+        logger.info(f"Materialized blueprint '{bp['name']}' to {target_dir} ({len(templates)} files)")
 
 
 def _matches_exclude_pattern(file_path: str, patterns: list[str]) -> bool:
@@ -51,7 +74,6 @@ async def create_blueprint(name: str, description: str = "",
             raise ValueError("Cannot import from a blueprint's virtual agent")
 
         # Verify workspace directory exists on filesystem
-        from pathlib import Path
         from ..config import AGENTS_DIR
         workspace_dir = Path(AGENTS_DIR) / source_agent["workspace_name"]
         if not workspace_dir.exists():
@@ -112,6 +134,7 @@ async def delete_blueprint(blueprint_id: int) -> dict:
         templates = await version_db.list_templates(agent_id=bp["agent_id"])
         for t in templates:
             await version_db.delete_template(t["id"])
+    await version_db.delete_pending_changes_for_blueprint(blueprint_id)
     await version_db.delete_blueprint(blueprint_id)
     return {"deleted": True}
 
@@ -132,6 +155,7 @@ async def force_delete_blueprint(blueprint_id: int) -> bool:
         for o in overrides:
             await version_db.remove_override(d["id"], o["file_path"])
     await version_db.delete_derivations_for_blueprint(blueprint_id)
+    await version_db.delete_pending_changes_for_blueprint(blueprint_id)
     await version_db.delete_blueprint(blueprint_id)
     return True
 
@@ -162,6 +186,13 @@ async def add_blueprint_file(blueprint_id: int, file_path: str, content: str) ->
     template = await version_db.create_template(
         agent_id=bp["agent_id"], file_path=file_path, content=content
     )
+
+    # Write to disk
+    from ..config import BLUEPRINTS_DIR
+    disk_file = Path(BLUEPRINTS_DIR) / bp["name"] / file_path
+    disk_file.parent.mkdir(parents=True, exist_ok=True)
+    disk_file.write_text(content, encoding="utf-8")
+
     return template
 
 
@@ -179,6 +210,15 @@ async def update_blueprint_file(
 
     # Update template in DB
     updated = await version_db.update_template(template["id"], content)
+
+    # Write to disk file
+    from ..config import BLUEPRINTS_DIR
+    disk_file = Path(BLUEPRINTS_DIR) / bp["name"] / file_path
+    disk_file.parent.mkdir(parents=True, exist_ok=True)
+    disk_file.write_text(content, encoding="utf-8")
+
+    # Clear any pending change for this file
+    await version_db.delete_pending_change_by_file(blueprint_id, file_path)
 
     # Sync to derived agents
     await _sync_file_to_derivations(bp, file_path, content)
@@ -198,6 +238,12 @@ async def delete_blueprint_file(blueprint_id: int, file_path: str) -> bool:
 
     await version_db.delete_template(template["id"])
 
+    # Delete from disk
+    from ..config import BLUEPRINTS_DIR
+    disk_file = Path(BLUEPRINTS_DIR) / bp["name"] / file_path
+    disk_file.unlink(missing_ok=True)
+    await version_db.delete_pending_change_by_file(blueprint_id, file_path)
+
     # Delete from non-overridden derived agents
     derivations = await version_db.list_derivations(blueprint_id)
     for d in derivations:
@@ -212,16 +258,20 @@ async def delete_blueprint_file(blueprint_id: int, file_path: str) -> bool:
     return True
 
 
-async def get_blueprint_variables(blueprint_id: int) -> list[str]:
-    """Get all variable names referenced across blueprint template files."""
+async def get_blueprint_variables(blueprint_id: int) -> list[dict]:
+    """Get all variables referenced across blueprint template files, with source file info."""
     bp = await version_db.get_blueprint(blueprint_id)
     if not bp:
         return []
     templates = await version_db.list_templates(agent_id=bp["agent_id"])
-    all_vars = set()
+    var_map = {}  # name -> set of file_paths
     for t in templates:
-        all_vars.update(extract_variable_names(t["content"]))
-    return sorted(all_vars)
+        for var_name in extract_variable_names(t["content"]):
+            var_map.setdefault(var_name, set()).add(t["file_path"])
+    return sorted(
+        [{"name": k, "source_files": sorted(v)} for k, v in var_map.items()],
+        key=lambda x: x["name"]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +405,6 @@ async def derive_agent(
             )
 
     # 4. Create workspace directory
-    from pathlib import Path
     from ..config import AGENTS_DIR
     workspace_dir = Path(AGENTS_DIR) / workspace_name
     workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -443,6 +492,45 @@ async def resync_file(agent_id: int, file_path: str) -> dict:
     return {"resynced": True, "file_path": file_path, "version": version}
 
 
+async def resync_all_files(agent_id: int) -> dict:
+    """Remove ALL overrides, delete stale derived template records, and
+    re-render every blueprint file to disk.
+
+    This also handles the compat case where ``lookup_or_create`` previously
+    materialised rendered content as derived-agent template records — those
+    records are deleted so the agent falls back to inheriting from the
+    blueprint.
+    """
+    derivation = await version_db.get_derivation_by_agent_id(agent_id)
+    if not derivation:
+        raise ValueError("Agent is not derived from a blueprint")
+
+    bp = await version_db.get_blueprint(derivation["blueprint_id"])
+    if not bp:
+        raise ValueError("Blueprint not found")
+
+    # 1. Clear ALL overrides for this derivation
+    await version_db.clear_all_overrides(derivation["id"])
+
+    # 2. Delete any erroneously materialised template records owned by
+    #    the derived agent (compat: old lookup_or_create bug).  Blueprint
+    #    templates belong to bp["agent_id"], not to agent_id.
+    stale_templates = await version_db.list_templates(agent_id=agent_id)
+    deleted_count = 0
+    for t in stale_templates:
+        await version_db.delete_template(t["id"])
+        deleted_count += 1
+
+    # 3. Re-render every blueprint file to disk
+    await sync_all_files_to_agent(bp, agent_id, derivation["id"])
+
+    return {
+        "resynced": True,
+        "blueprint_name": bp["name"],
+        "deleted_stale_templates": deleted_count,
+    }
+
+
 async def get_derivation_status(agent_id: int) -> dict | None:
     """Get derivation status for an agent: blueprint info + per-file override status."""
     derivation = await version_db.get_derivation_by_agent_id(agent_id)
@@ -471,4 +559,150 @@ async def get_derivation_status(agent_id: int) -> dict | None:
         "blueprint_name": bp["name"],
         "derivation_id": derivation["id"],
         "files": files,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Accept / Reject pending changes
+# ---------------------------------------------------------------------------
+
+
+async def _generate_change_commit_msg(change: dict) -> str:
+    """Generate a descriptive commit message for a pending change.
+    TODO: integrate LLM via summary_service for richer messages."""
+    if change["change_type"] == "deleted":
+        return f"Delete {change['file_path']}"
+    elif change["change_type"] == "added":
+        return f"Add {change['file_path']}"
+    else:
+        return f"Update {change['file_path']}"
+
+
+async def accept_pending_change(change_id: int) -> dict:
+    """Accept a single pending change: update DB, create version, sync derived agents."""
+    change = await version_db.get_pending_change(change_id)
+    if not change or change["status"] != "pending":
+        raise ValueError(f"Pending change {change_id} not found or already resolved")
+
+    bp = await version_db.get_blueprint(change["blueprint_id"])
+    if not bp:
+        raise ValueError(f"Blueprint not found for change {change_id}")
+
+    # 1. Update DB template
+    if change["change_type"] == "modified":
+        template = await version_db.get_template_by_path(bp["agent_id"], change["file_path"])
+        if template:
+            await version_db.update_template(template["id"], change["new_content"])
+    elif change["change_type"] == "added":
+        await version_db.create_template(bp["agent_id"], change["file_path"], change["new_content"])
+    elif change["change_type"] == "deleted":
+        template = await version_db.get_template_by_path(bp["agent_id"], change["file_path"])
+        if template:
+            await version_db.delete_template(template["id"])
+
+    # 2. Create version record with LLM-generated commit message
+    version_content = change["new_content"] if change["new_content"] is not None else ""
+    content_hash = version_db.compute_hash(version_content)
+    commit_msg = await _generate_change_commit_msg(change)
+    await version_db.create_version(
+        agent_id=bp["agent_id"], file_path=change["file_path"],
+        content=version_content, content_hash=content_hash,
+        source="filesystem_sync", commit_msg=commit_msg,
+    )
+
+    # 3. Propagate to derived agents
+    synced_agents = []
+    failed_agents = []
+    if change["change_type"] == "deleted":
+        derivations = await version_db.list_derivations(bp["id"])
+        for d in derivations:
+            is_overridden = await version_db.is_file_overridden(d["id"], change["file_path"])
+            if not is_overridden:
+                try:
+                    file_service.delete_file(d["workspace_name"], change["file_path"])
+                    synced_agents.append(d["workspace_name"])
+                except Exception as e:
+                    logger.warning(f"Failed to delete {change['file_path']} from {d['workspace_name']}: {e}")
+                    failed_agents.append(d["workspace_name"])
+    elif change["new_content"] is not None:
+        try:
+            await _sync_file_to_derivations(bp, change["file_path"], change["new_content"])
+            derivations = await version_db.list_derivations(bp["id"])
+            for d in derivations:
+                is_overridden = await version_db.is_file_overridden(d["id"], change["file_path"])
+                if not is_overridden:
+                    synced_agents.append(d["workspace_name"])
+        except Exception as e:
+            logger.error(f"Sync failed: {e}")
+            # Report all non-overridden derivations as failed
+            derivations = await version_db.list_derivations(bp["id"])
+            for d in derivations:
+                is_overridden = await version_db.is_file_overridden(d["id"], change["file_path"])
+                if not is_overridden:
+                    failed_agents.append(d["workspace_name"])
+
+    # 4. Resolve pending change
+    await version_db.resolve_pending_change(change_id, "accepted")
+
+    return {
+        "accepted": True,
+        "file_path": change["file_path"],
+        "change_type": change["change_type"],
+        "commit_msg": commit_msg,
+        "synced_agents": synced_agents,
+        "failed_agents": failed_agents,
+    }
+
+
+async def reject_pending_change(change_id: int) -> dict:
+    """Reject a pending change: revert file on disk to DB content."""
+    from ..config import BLUEPRINTS_DIR
+
+    change = await version_db.get_pending_change(change_id)
+    if not change or change["status"] != "pending":
+        raise ValueError(f"Pending change {change_id} not found or already resolved")
+
+    bp = await version_db.get_blueprint(change["blueprint_id"])
+    if not bp:
+        raise ValueError(f"Blueprint not found for change {change_id}")
+
+    bp_dir = Path(BLUEPRINTS_DIR) / bp["name"]
+    file_path = bp_dir / change["file_path"]
+
+    if change["change_type"] == "modified":
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(change["old_content"], encoding="utf-8")
+    elif change["change_type"] == "added":
+        file_path.unlink(missing_ok=True)
+    elif change["change_type"] == "deleted":
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(change["old_content"], encoding="utf-8")
+
+    await version_db.resolve_pending_change(change_id, "rejected")
+
+    return {
+        "rejected": True,
+        "file_path": change["file_path"],
+        "reverted": True,
+    }
+
+
+async def accept_all_pending_changes(blueprint_id: int) -> dict:
+    """Accept all pending changes for a blueprint."""
+    changes = await version_db.list_pending_changes(blueprint_id)
+    results = []
+    failed = []
+
+    for change in changes:
+        try:
+            result = await accept_pending_change(change["id"])
+            results.append(result)
+        except Exception as e:
+            logger.error(f"Failed to accept change {change['id']}: {e}")
+            failed.append({"file_path": change["file_path"], "error": str(e)})
+
+    return {
+        "accepted_count": len(results),
+        "changes": results,
+        "failed_changes": failed,
     }

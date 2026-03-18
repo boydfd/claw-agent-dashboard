@@ -3,6 +3,9 @@ import os
 # Directory where agent workspaces are mounted (read-only)
 AGENTS_DIR = os.environ.get("AGENTS_DIR", "/agents")
 
+# Blueprint filesystem directory (under AGENTS_DIR)
+BLUEPRINTS_DIR = os.path.join(AGENTS_DIR, "blueprints")
+
 # Directory for writable data (translations, config)
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 

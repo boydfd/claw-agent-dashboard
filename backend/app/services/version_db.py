@@ -114,6 +114,28 @@ async def init_db():
     """)
     await db.commit()
 
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS blueprint_pending_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            blueprint_id INTEGER NOT NULL REFERENCES agent_blueprints(id),
+            file_path TEXT NOT NULL,
+            change_type TEXT NOT NULL CHECK(change_type IN ('modified', 'added', 'deleted')),
+            old_content TEXT,
+            new_content TEXT,
+            old_hash TEXT,
+            new_hash TEXT,
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'accepted', 'rejected')),
+            detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            resolved_at TIMESTAMP
+        )
+    """)
+    await db.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_changes_unique
+        ON blueprint_pending_changes(blueprint_id, file_path)
+        WHERE status = 'pending'
+    """)
+    await db.commit()
+
     # Partial unique indexes for variables (added after executescript)
     await db.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_variables_global_unique
@@ -470,9 +492,9 @@ async def delete_template(template_id: int) -> bool:
 
 
 async def find_templates_referencing_variable(var_name: str) -> list[dict]:
-    """Find all templates whose content contains ${var_name}."""
+    """Find all templates whose content contains !{var_name}."""
     db = await get_db()
-    pattern = f"${{{var_name}}}"
+    pattern = f"!{{{var_name}}}"
     cursor = await db.execute(
         """SELECT t.*, a.workspace_name as agent_workspace_name
            FROM templates t
@@ -655,6 +677,17 @@ async def remove_override(derivation_id: int, file_path: str) -> bool:
     return cursor.rowcount > 0
 
 
+async def clear_all_overrides(derivation_id: int) -> int:
+    """Remove ALL override records for a derivation. Returns count deleted."""
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM derivation_overrides WHERE derivation_id = ?",
+        (derivation_id,),
+    )
+    await db.commit()
+    return cursor.rowcount
+
+
 async def list_overrides(derivation_id: int) -> list[dict]:
     db = await get_db()
     cursor = await db.execute(
@@ -692,6 +725,140 @@ async def delete_derivations_for_blueprint(blueprint_id: int) -> int:
     # Then delete derivations
     cursor = await db.execute(
         "DELETE FROM agent_derivations WHERE blueprint_id = ?", (blueprint_id,)
+    )
+    await db.commit()
+    return cursor.rowcount
+
+
+# ---------------------------------------------------------------------------
+# Blueprint Pending Changes CRUD
+# ---------------------------------------------------------------------------
+
+async def upsert_pending_change(
+    blueprint_id: int, file_path: str, change_type: str,
+    old_content: str | None, new_content: str | None,
+    old_hash: str | None, new_hash: str | None,
+) -> dict | None:
+    """Create or update a pending change record.
+
+    Returns None if the change was previously rejected with the same new_hash
+    (prevents rejected changes from reappearing on the next scan cycle).
+    """
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT id FROM blueprint_pending_changes WHERE blueprint_id = ? AND file_path = ? AND status = 'pending'",
+        (blueprint_id, file_path),
+    )
+    existing = await cursor.fetchone()
+
+    if existing:
+        await db.execute(
+            """UPDATE blueprint_pending_changes
+               SET change_type = ?, old_content = ?, new_content = ?,
+                   old_hash = ?, new_hash = ?, detected_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (change_type, old_content, new_content, old_hash, new_hash, existing["id"]),
+        )
+        await db.commit()
+        change_id = existing["id"]
+    else:
+        # Skip if this exact change was already rejected (same blueprint, file, new_hash).
+        # Use IS NULL-safe comparison because new_hash can be None (deleted files).
+        if new_hash is None:
+            rejected = await db.execute(
+                """SELECT id FROM blueprint_pending_changes
+                   WHERE blueprint_id = ? AND file_path = ? AND status = 'rejected' AND new_hash IS NULL""",
+                (blueprint_id, file_path),
+            )
+        else:
+            rejected = await db.execute(
+                """SELECT id FROM blueprint_pending_changes
+                   WHERE blueprint_id = ? AND file_path = ? AND status = 'rejected' AND new_hash = ?""",
+                (blueprint_id, file_path, new_hash),
+            )
+        if await rejected.fetchone():
+            return None  # Already rejected, don't re-create
+
+        cursor = await db.execute(
+            """INSERT INTO blueprint_pending_changes
+               (blueprint_id, file_path, change_type, old_content, new_content, old_hash, new_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (blueprint_id, file_path, change_type, old_content, new_content, old_hash, new_hash),
+        )
+        await db.commit()
+        change_id = cursor.lastrowid
+
+    cursor = await db.execute("SELECT * FROM blueprint_pending_changes WHERE id = ?", (change_id,))
+    return dict(await cursor.fetchone())
+
+
+async def delete_pending_change_by_file(blueprint_id: int, file_path: str) -> bool:
+    """Delete pending change for a specific file."""
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM blueprint_pending_changes WHERE blueprint_id = ? AND file_path = ? AND status = 'pending'",
+        (blueprint_id, file_path),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def get_pending_change(change_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM blueprint_pending_changes WHERE id = ?", (change_id,))
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def list_pending_changes(blueprint_id: int | None = None) -> list[dict]:
+    """List pending changes. If blueprint_id given, filter to that blueprint."""
+    db = await get_db()
+    if blueprint_id is not None:
+        cursor = await db.execute(
+            "SELECT * FROM blueprint_pending_changes WHERE blueprint_id = ? AND status = 'pending' ORDER BY detected_at",
+            (blueprint_id,),
+        )
+    else:
+        cursor = await db.execute(
+            "SELECT * FROM blueprint_pending_changes WHERE status = 'pending' ORDER BY detected_at",
+        )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def get_pending_changes_summary() -> list[dict]:
+    """Get per-blueprint pending change counts."""
+    db = await get_db()
+    cursor = await db.execute("""
+        SELECT pc.blueprint_id, bp.name AS blueprint_name,
+               COUNT(*) AS pending_count,
+               MAX(pc.detected_at) AS latest_detected_at
+        FROM blueprint_pending_changes pc
+        JOIN agent_blueprints bp ON bp.id = pc.blueprint_id
+        WHERE pc.status = 'pending'
+        GROUP BY pc.blueprint_id
+    """)
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def resolve_pending_change(change_id: int, status: str) -> bool:
+    """Mark a pending change as accepted or rejected."""
+    if status not in ("accepted", "rejected"):
+        raise ValueError(f"Invalid status: {status}")
+    db = await get_db()
+    cursor = await db.execute(
+        "UPDATE blueprint_pending_changes SET status = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
+        (status, change_id),
+    )
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def delete_pending_changes_for_blueprint(blueprint_id: int) -> int:
+    """Delete all pending changes for a blueprint (used on blueprint deletion)."""
+    db = await get_db()
+    cursor = await db.execute(
+        "DELETE FROM blueprint_pending_changes WHERE blueprint_id = ?",
+        (blueprint_id,),
     )
     await db.commit()
     return cursor.rowcount

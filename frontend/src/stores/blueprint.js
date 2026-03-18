@@ -13,6 +13,14 @@ import {
   deleteBlueprintFile as apiDeleteFile,
   fetchBlueprintVariables,
   deriveAgent as apiDerive,
+  fetchPendingChangesSummary,
+  fetchBlueprintPendingChanges,
+  acceptPendingChange as apiAcceptChange,
+  rejectPendingChange as apiRejectChange,
+  acceptAllPendingChanges as apiAcceptAll,
+  fetchBlueprintFileVersions,
+  fetchBlueprintFileVersion,
+  restoreBlueprintFileVersion,
 } from '../api'
 
 export const useBlueprintStore = defineStore('blueprint', () => {
@@ -31,6 +39,20 @@ export const useBlueprintStore = defineStore('blueprint', () => {
 
   // View mode: 'list' or 'editor'
   const viewMode = ref('list')
+
+  // Pending changes (filesystem sync)
+  const pendingChangesSummary = ref({ blueprints: [], total_pending: 0 })
+  const currentPendingChanges = ref(null)  // detailed changes for one blueprint
+  const pendingLoading = ref(false)
+  const pollTimer = ref(null)
+
+  // Version history
+  const versionDrawerOpen = ref(false)
+  const versionFilePath = ref(null)
+  const versionList = ref([])
+  const versionLoading = ref(false)
+  const versionPreviewContent = ref(null)
+  const versionPreviewNum = ref(null)
 
   // Actions
   async function loadBlueprints() {
@@ -149,6 +171,102 @@ export const useBlueprintStore = defineStore('blueprint', () => {
     })
   }
 
+  // --- Pending Changes ---
+  async function loadPendingChangesSummary() {
+    try {
+      pendingChangesSummary.value = await fetchPendingChangesSummary()
+    } catch (e) {
+      console.error('Failed to load pending changes summary:', e)
+    }
+  }
+
+  async function loadBlueprintPendingChanges(blueprintId) {
+    pendingLoading.value = true
+    try {
+      currentPendingChanges.value = await fetchBlueprintPendingChanges(blueprintId)
+    } finally {
+      pendingLoading.value = false
+    }
+  }
+
+  async function acceptChange(blueprintId, changeId) {
+    const result = await apiAcceptChange(blueprintId, changeId)
+    await loadBlueprintPendingChanges(blueprintId)
+    await loadPendingChangesSummary()
+    return result
+  }
+
+  async function rejectChange(blueprintId, changeId) {
+    const result = await apiRejectChange(blueprintId, changeId)
+    await loadBlueprintPendingChanges(blueprintId)
+    await loadPendingChangesSummary()
+    return result
+  }
+
+  async function acceptAllChanges(blueprintId) {
+    const result = await apiAcceptAll(blueprintId)
+    await loadBlueprintPendingChanges(blueprintId)
+    await loadPendingChangesSummary()
+    return result
+  }
+
+  function startPendingPolling() {
+    if (pollTimer.value) return
+    loadPendingChangesSummary()
+    pollTimer.value = setInterval(loadPendingChangesSummary, 30000)
+  }
+
+  function stopPendingPolling() {
+    if (pollTimer.value) {
+      clearInterval(pollTimer.value)
+      pollTimer.value = null
+    }
+  }
+
+  // --- Version History ---
+  async function openVersionDrawer(filePath) {
+    if (!currentBlueprint.value) return
+    versionFilePath.value = filePath
+    versionList.value = []
+    versionPreviewContent.value = null
+    versionPreviewNum.value = null
+    versionDrawerOpen.value = true
+    versionLoading.value = true
+    try {
+      versionList.value = await fetchBlueprintFileVersions(currentBlueprint.value.id, filePath)
+    } finally {
+      versionLoading.value = false
+    }
+  }
+
+  function closeVersionDrawer() {
+    versionDrawerOpen.value = false
+    versionFilePath.value = null
+    versionList.value = []
+    versionPreviewContent.value = null
+    versionPreviewNum.value = null
+  }
+
+  async function viewVersion(filePath, versionNum) {
+    if (!currentBlueprint.value) return
+    const version = await fetchBlueprintFileVersion(currentBlueprint.value.id, filePath, versionNum)
+    versionPreviewContent.value = version.content
+    versionPreviewNum.value = version.version_num
+  }
+
+  async function restoreVersion(filePath, versionNum) {
+    if (!currentBlueprint.value) return
+    await restoreBlueprintFileVersion(currentBlueprint.value.id, filePath, versionNum)
+    // Refresh version list
+    versionList.value = await fetchBlueprintFileVersions(currentBlueprint.value.id, filePath)
+    // Refresh the current file if it's the same
+    if (currentFile.value?.file_path === filePath) {
+      const template = await fetchBlueprintFile(currentBlueprint.value.id, filePath)
+      currentFile.value.content = template.content
+      editContent.value = template.content
+    }
+  }
+
   return {
     blueprints, loading, currentBlueprint, currentFile,
     editContent, saving,
@@ -158,5 +276,13 @@ export const useBlueprintStore = defineStore('blueprint', () => {
     selectFile, saveCurrentFile, addFile, deleteFile,
     createNewBlueprint, deleteBlueprint,
     openDeriveDialog, derive,
+    pendingChangesSummary, currentPendingChanges, pendingLoading,
+    loadPendingChangesSummary, loadBlueprintPendingChanges,
+    acceptChange, rejectChange, acceptAllChanges,
+    startPendingPolling, stopPendingPolling,
+    // Version history
+    versionDrawerOpen, versionFilePath, versionList, versionLoading,
+    versionPreviewContent, versionPreviewNum,
+    openVersionDrawer, closeVersionDrawer, viewVersion, restoreVersion,
   }
 })

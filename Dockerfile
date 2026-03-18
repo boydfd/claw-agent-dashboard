@@ -17,6 +17,11 @@ FROM python:3.12-slim
 ARG PIP_INDEX_URL
 WORKDIR /app
 
+# Create a non-root user with uid=1000 to match host vagrant user.
+# This ensures files written to bind-mounted host directories (e.g. /agents)
+# are owned by uid=1000 (vagrant) rather than root.
+RUN groupadd -g 1000 appuser && useradd -u 1000 -g 1000 -m appuser
+
 # Install Python dependencies
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r backend/requirements.txt
@@ -27,8 +32,10 @@ COPY backend/ ./backend/
 # Copy frontend build
 COPY --from=frontend-build /app/frontend/dist ./static/
 
-# Create data directory
-RUN mkdir -p /data/agents
+# Create data directory and transfer ownership
+RUN mkdir -p /data/agents && chown -R appuser:appuser /app /data
+
+USER appuser
 
 EXPOSE 8080
 

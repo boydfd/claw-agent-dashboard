@@ -53,13 +53,13 @@ def agent_workspace(tmp_path):
     file_service.AGENTS_DIR = str(agents_dir)
 
     # Create files
-    (ws / "CLAUDE.md").write_text("# Agent: ${AGENT_NAME}\nProject: ${PROJECT}")
-    (ws / "SOUL.md").write_text("You are ${AGENT_NAME}.")
-    (ws / "config.json").write_text('{"name": "${AGENT_NAME}"}')
+    (ws / "CLAUDE.md").write_text("# Agent: !{AGENT_NAME}\nProject: !{PROJECT}")
+    (ws / "SOUL.md").write_text("You are !{AGENT_NAME}.")
+    (ws / "config.json").write_text('{"name": "!{AGENT_NAME}"}')
 
     # Skills
     (ws / "skills" / "greeting").mkdir(parents=True)
-    (ws / "skills" / "greeting" / "SKILL.md").write_text("name: greeting\nstyle: ${GREETING_STYLE}")
+    (ws / "skills" / "greeting" / "SKILL.md").write_text("name: greeting\nstyle: !{GREETING_STYLE}")
 
     # Memory (to be excluded)
     (ws / "memories").mkdir()
@@ -128,8 +128,8 @@ class TestListAllAgentFiles:
     def test_reads_file_content(self, agent_workspace):
         files = file_service.list_all_agent_files(agent_workspace["name"])
         claude_file = next(f for f in files if f["path"] == "CLAUDE.md")
-        assert "${AGENT_NAME}" in claude_file["content"]
-        assert "${PROJECT}" in claude_file["content"]
+        assert "!{AGENT_NAME}" in claude_file["content"]
+        assert "!{PROJECT}" in claude_file["content"]
 
     def test_skips_git_dir(self, agent_workspace):
         (agent_workspace["workspace"] / ".git").mkdir()
@@ -235,9 +235,10 @@ class TestCreateBlueprintWithImport:
             "vars-bp", "var test", source_agent_id=agent_id
         )
         variables = await blueprint_service.get_blueprint_variables(result["id"])
-        assert "AGENT_NAME" in variables
-        assert "PROJECT" in variables
-        assert "GREETING_STYLE" in variables
+        var_names = [v["name"] for v in variables]
+        assert "AGENT_NAME" in var_names
+        assert "PROJECT" in var_names
+        assert "GREETING_STYLE" in var_names
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self):

@@ -22,6 +22,21 @@
         </template>
       </el-popconfirm>
 
+      <!-- Restore All from Blueprint button (for derived agents with any overrides) -->
+      <el-popconfirm
+        v-if="store.derivationStatus?.is_derived && hasAnyOverrides"
+        :title="t('management.resyncAllConfirm')"
+        :confirm-button-text="t('management.confirmResyncAll')"
+        :cancel-button-text="t('common.cancel')"
+        @confirm="doResyncAll"
+      >
+        <template #reference>
+          <el-button size="small" type="danger" :icon="Refresh">
+            {{ t('management.resyncAllFromBlueprint') }}
+          </el-button>
+        </template>
+      </el-popconfirm>
+
       <!-- Batch translate button -->
       <el-button
         v-if="store.selectedFiles.size > 0"
@@ -126,17 +141,22 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Document, EditPen, View, DocumentCopy, MagicStick, Upload, Clock, Refresh } from '@element-plus/icons-vue'
 import { useAgentStore } from '../stores/agent'
-import { resyncFile } from '../api'
+import { resyncFile, resyncAll } from '../api'
 
 const { t } = useI18n()
 const store = useAgentStore()
 const showSaveDialog = ref(false)
 const commitMsg = ref('')
+
+const hasAnyOverrides = computed(() => {
+  const files = store.derivationStatus?.files
+  return files?.some(f => f.is_overridden) || false
+})
 
 async function doBatchTranslate() {
   try {
@@ -186,6 +206,20 @@ async function doResync() {
     await store.loadDerivationStatus()
   } catch (e) {
     ElMessage.error(t('management.resyncFailed'))
+  }
+}
+
+async function doResyncAll() {
+  try {
+    await resyncAll(store.currentAgent.name)
+    ElMessage.success(t('management.resyncAllSuccess'))
+    // Reload current file and derivation status
+    if (store.currentFile) {
+      await store.selectFile(store.currentFile.path)
+    }
+    await store.loadDerivationStatus()
+  } catch (e) {
+    ElMessage.error(t('management.resyncAllFailed'))
   }
 }
 </script>

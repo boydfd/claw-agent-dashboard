@@ -39,7 +39,7 @@ async def lookup_template(agent_id: int = Query(...), file_path: str = Query(...
 
 @router.get("/{template_id}")
 async def get_template(template_id: int):
-    """Get template detail (raw content with ${VAR} placeholders)."""
+    """Get template detail (raw content with !{VAR} placeholders)."""
     template = await template_service.get_template(template_id)
     if not template:
         raise HTTPException(404, "Template not found")
@@ -47,10 +47,13 @@ async def get_template(template_id: int):
 
 
 @router.get("/{template_id}/rendered")
-async def get_rendered_template(template_id: int):
-    """Get rendered template content (variables substituted)."""
+async def get_rendered_template(template_id: int, agent_id: int = Query(None)):
+    """Get rendered template content (variables substituted).
+    Pass agent_id for derived agents viewing inherited blueprint templates."""
     try:
-        return await template_service.render_template_content(template_id)
+        return await template_service.render_template_content(
+            template_id, requesting_agent_id=agent_id
+        )
     except ValueError as e:
         raise HTTPException(404, str(e))
 

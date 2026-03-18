@@ -28,7 +28,7 @@
             class="variable-row"
           >
             <div class="variable-header">
-              <span class="variable-name">{{ '${' + varName + '}' }}</span>
+              <span class="variable-name">{{ '!{' + varName + '}' }}</span>
               <el-tag
                 v-if="isOverridden(varName)"
                 size="small"
@@ -129,7 +129,8 @@ watch(() => store.deriveDialogVisible, async (visible) => {
   try {
     const bp = await fetchBlueprint(store.deriveBlueprintId)
     blueprintName.value = bp.name || ''
-    referencedVariables.value = bp.referenced_variables || []
+    const rawVars = bp.referenced_variables || []
+    referencedVariables.value = rawVars.map(v => v.name)
 
     // Fetch variable defaults from the blueprint's virtual agent
     if (bp.agent_id && referencedVariables.value.length > 0) {

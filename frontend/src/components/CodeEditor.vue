@@ -51,7 +51,7 @@ function updateVariableDecorations() {
 
   const text = model.getValue()
   const decorations = []
-  const regex = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g
+  const regex = /!\{([A-Za-z_][A-Za-z0-9_]*)\}/g
   let match
 
   while ((match = regex.exec(text)) !== null) {
@@ -109,8 +109,7 @@ onBeforeUnmount(() => {
 }
 :deep(.variable-placeholder) {
   background-color: rgba(233, 69, 96, 0.15);
-  border: 1px solid rgba(233, 69, 96, 0.3);
+  outline: 1px solid rgba(233, 69, 96, 0.3);
   border-radius: 3px;
-  padding: 0 2px;
 }
 </style>

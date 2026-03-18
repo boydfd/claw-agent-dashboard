@@ -95,7 +95,7 @@ export const fetchVariableReferences = (id) => api.get(`/variables/${id}/referen
 export const fetchAgentTemplates = (agentId) => api.get(`/templates/agent/${agentId}`).then(r => r.data)
 export const lookupTemplate = (agentId, filePath) => api.get('/templates/lookup', { params: { agent_id: agentId, file_path: filePath } }).then(r => r.data)
 export const fetchTemplate = (id) => api.get(`/templates/${id}`).then(r => r.data)
-export const fetchRenderedTemplate = (id) => api.get(`/templates/${id}/rendered`).then(r => r.data)
+export const fetchRenderedTemplate = (id, agentId = null) => api.get(`/templates/${id}/rendered`, agentId ? { params: { agent_id: agentId } } : {}).then(r => r.data)
 export const updateTemplate = (id, content, commitMsg = null) => {
   const body = { content }
   if (commitMsg) body.commit_msg = commitMsg
@@ -126,3 +126,16 @@ export const deriveAgent = (id, data) => api.post(`/blueprints/${id}/derive`, da
 // Agent derivation status
 export const fetchDerivationStatus = (agentName) => api.get(`/agents/${agentName}/derivation-status`).then(r => r.data)
 export const resyncFile = (agentName, filePath) => api.post(`/agents/${agentName}/files/${filePath}/resync`).then(r => r.data)
+export const resyncAll = (agentName) => api.post(`/agents/${agentName}/resync-all`).then(r => r.data)
+
+// Blueprint pending changes (filesystem sync)
+export const fetchPendingChangesSummary = () => api.get('/blueprints/pending-changes').then(r => r.data)
+export const fetchBlueprintPendingChanges = (id) => api.get(`/blueprints/${id}/pending-changes`).then(r => r.data)
+export const acceptPendingChange = (bpId, changeId) => api.post(`/blueprints/${bpId}/pending-changes/${changeId}/accept`).then(r => r.data)
+export const rejectPendingChange = (bpId, changeId) => api.post(`/blueprints/${bpId}/pending-changes/${changeId}/reject`).then(r => r.data)
+export const acceptAllPendingChanges = (bpId) => api.post(`/blueprints/${bpId}/pending-changes/accept-all`).then(r => r.data)
+
+// Blueprint file versions
+export const fetchBlueprintFileVersions = (bpId, filePath) => api.get(`/blueprints/${bpId}/files/${filePath}/versions`).then(r => r.data)
+export const fetchBlueprintFileVersion = (bpId, filePath, versionNum) => api.get(`/blueprints/${bpId}/files/${filePath}/versions/${versionNum}`).then(r => r.data)
+export const restoreBlueprintFileVersion = (bpId, filePath, versionNum) => api.post(`/blueprints/${bpId}/files/${filePath}/restore/${versionNum}`).then(r => r.data)

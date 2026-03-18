@@ -83,6 +83,18 @@ async def create_blueprint(body: BlueprintCreate):
         raise HTTPException(500, str(e))
 
 
+# ---------------------------------------------------------------------------
+# Pending Changes (Filesystem Sync) — global route MUST be before /{blueprint_id}
+# ---------------------------------------------------------------------------
+
+@router.get("/pending-changes")
+async def get_all_pending_changes():
+    """Global pending changes summary across all blueprints."""
+    summary = await version_db.get_pending_changes_summary()
+    total = sum(s["pending_count"] for s in summary)
+    return {"blueprints": summary, "total_pending": total}
+
+
 @router.get("/{blueprint_id}")
 async def get_blueprint(blueprint_id: int):
     bp = await blueprint_service.get_blueprint(blueprint_id)
@@ -146,6 +158,80 @@ async def add_blueprint_file(blueprint_id: int, body: BlueprintFileCreate):
         raise HTTPException(500, str(e))
 
 
+# ---------------------------------------------------------------------------
+# Version History — MUST be before greedy {file_path:path} GET route
+# ---------------------------------------------------------------------------
+
+@router.get("/{blueprint_id}/files/{file_path:path}/versions")
+async def get_blueprint_file_versions(blueprint_id: int, file_path: str):
+    """Get version history for a blueprint file."""
+    bp = await blueprint_service.get_blueprint(blueprint_id)
+    if not bp:
+        raise HTTPException(404, "Blueprint not found")
+    versions, total = await version_db.get_versions(bp["agent_id"], file_path)
+    return versions
+
+
+@router.get("/{blueprint_id}/files/{file_path:path}/versions/{version_num}")
+async def get_blueprint_file_version(blueprint_id: int, file_path: str, version_num: int):
+    """Get a specific version of a blueprint file (includes content)."""
+    bp = await blueprint_service.get_blueprint(blueprint_id)
+    if not bp:
+        raise HTTPException(404, "Blueprint not found")
+    versions, _ = await version_db.get_versions(bp["agent_id"], file_path)
+    version_meta = next((v for v in versions if v["version_num"] == version_num), None)
+    if not version_meta:
+        raise HTTPException(404, "Version not found")
+    # Fetch full version record including content
+    version = await version_db.get_version(version_meta["id"])
+    return version
+
+
+@router.post("/{blueprint_id}/files/{file_path:path}/restore/{version_num}")
+async def restore_blueprint_file_version(blueprint_id: int, file_path: str, version_num: int):
+    """Restore a blueprint file to a specific version."""
+    bp = await blueprint_service.get_blueprint(blueprint_id)
+    if not bp:
+        raise HTTPException(404, "Blueprint not found")
+
+    versions, _ = await version_db.get_versions(bp["agent_id"], file_path)
+    version_meta = next((v for v in versions if v["version_num"] == version_num), None)
+    if not version_meta:
+        raise HTTPException(404, "Version not found")
+    # Fetch full version record including content
+    version = await version_db.get_version(version_meta["id"])
+
+    # Update DB template
+    template = await version_db.get_template_by_path(bp["agent_id"], file_path)
+    if template:
+        await version_db.update_template(template["id"], version["content"])
+
+    # Write to disk
+    from pathlib import Path
+    from ..config import BLUEPRINTS_DIR
+    disk_file = Path(BLUEPRINTS_DIR) / bp["name"] / file_path
+    disk_file.parent.mkdir(parents=True, exist_ok=True)
+    disk_file.write_text(version["content"], encoding="utf-8")
+
+    # Clear pending change
+    await version_db.delete_pending_change_by_file(blueprint_id, file_path)
+
+    # Sync to derived agents
+    await blueprint_service._sync_file_to_derivations(bp, file_path, version["content"])
+
+    # Create new version record for the restore
+    content_hash = version_db.compute_hash(version["content"])
+    await version_db.create_version(
+        agent_id=bp["agent_id"], file_path=file_path,
+        content=version["content"], content_hash=content_hash,
+        source="dashboard", commit_msg=f"Restored to version {version_num}",
+    )
+
+    return {"restored": True, "version_num": version_num, "file_path": file_path}
+
+
+# --- Blueprint File CRUD (greedy {file_path:path} routes) ---
+
 @router.get("/{blueprint_id}/files/{file_path:path}")
 async def get_blueprint_file(blueprint_id: int, file_path: str):
     template = await blueprint_service.get_blueprint_file(blueprint_id, file_path)
@@ -177,6 +263,61 @@ async def delete_blueprint_file(blueprint_id: int, file_path: str):
 @router.get("/{blueprint_id}/variables")
 async def list_blueprint_variables(blueprint_id: int):
     return await blueprint_service.get_blueprint_variables(blueprint_id)
+
+
+# ---------------------------------------------------------------------------
+# Pending Changes — per-blueprint
+# ---------------------------------------------------------------------------
+
+@router.get("/{blueprint_id}/pending-changes")
+async def get_blueprint_pending_changes(blueprint_id: int):
+    """Detailed pending changes for a specific blueprint."""
+    bp = await blueprint_service.get_blueprint(blueprint_id)
+    if not bp:
+        raise HTTPException(404, "Blueprint not found")
+    changes = await version_db.list_pending_changes(blueprint_id)
+    return {
+        "blueprint_id": blueprint_id,
+        "blueprint_name": bp["name"],
+        "changes": changes,
+    }
+
+
+@router.post("/{blueprint_id}/pending-changes/{change_id}/accept")
+async def accept_change(blueprint_id: int, change_id: int):
+    """Accept a single file change."""
+    try:
+        result = await blueprint_service.accept_pending_change(change_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/{blueprint_id}/pending-changes/{change_id}/reject")
+async def reject_change(blueprint_id: int, change_id: int):
+    """Reject a single file change — revert file on disk."""
+    try:
+        result = await blueprint_service.reject_pending_change(change_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/{blueprint_id}/pending-changes/accept-all")
+async def accept_all_changes(blueprint_id: int):
+    """Accept all pending changes for a blueprint (auto-accept API)."""
+    bp = await blueprint_service.get_blueprint(blueprint_id)
+    if not bp:
+        raise HTTPException(404, "Blueprint not found")
+    try:
+        result = await blueprint_service.accept_all_pending_changes(blueprint_id)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 # --- Derivations ---

@@ -9,13 +9,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from .routers import agents, translate, settings, global_skills, status, versions, variables, templates, blueprints
-from .services import version_db, change_detector
+from .services import version_db, change_detector, blueprint_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await version_db.init_db()
+    await blueprint_service.initialize_blueprint_dirs()
     await change_detector.start_detector(interval=30)
     yield
     # Shutdown

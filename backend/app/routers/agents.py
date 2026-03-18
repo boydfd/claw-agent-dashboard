@@ -131,3 +131,20 @@ async def resync_file(agent_name: str, file_path: str):
         return await blueprint_service.resync_file(row["id"], file_path)
     except ValueError as e:
         raise HTTPException(404, str(e))
+
+
+@router.post("/agents/{agent_name}/resync-all")
+async def resync_all_files(agent_name: str):
+    """Restore ALL files to blueprint sync, removing all overrides."""
+    from ..services import blueprint_service
+    db = await version_db.get_db()
+    cursor = await db.execute(
+        "SELECT id FROM agents WHERE workspace_name = ?", (agent_name,)
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(404, "Agent not found")
+    try:
+        return await blueprint_service.resync_all_files(row["id"])
+    except ValueError as e:
+        raise HTTPException(404, str(e))

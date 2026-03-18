@@ -116,6 +116,99 @@ class HashScanDetector(ChangeDetector):
                     )
                     await version_db.upsert_tracked_file(agent_id, rel_path, content_hash)
 
+        await self._scan_blueprints()
+
+    async def _scan_blueprints(self):
+        """Scan blueprint directories, compare against DB templates."""
+        from ..config import BLUEPRINTS_DIR
+
+        blueprints_dir = Path(BLUEPRINTS_DIR)
+        if not blueprints_dir.exists():
+            return
+
+        all_blueprints = await version_db.list_blueprints()
+        bp_by_dir = {bp["name"]: bp for bp in all_blueprints}
+
+        for dir_entry in blueprints_dir.iterdir():
+            if not dir_entry.is_dir() or dir_entry.name.startswith('.'):
+                continue
+
+            bp = bp_by_dir.get(dir_entry.name)
+            if not bp:
+                continue
+
+            db_templates = await version_db.list_templates(agent_id=bp["agent_id"])
+            db_map = {t["file_path"]: t for t in db_templates}
+
+            disk_files = self._collect_blueprint_files(dir_entry)
+            seen_paths = set()
+
+            for rel_path, full_path in disk_files:
+                seen_paths.add(rel_path)
+                try:
+                    content = full_path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+                content_hash = version_db.compute_hash(content)
+
+                if rel_path in db_map:
+                    db_hash = version_db.compute_hash(db_map[rel_path]["content"])
+                    if content_hash != db_hash:
+                        await self._upsert_pending_change(
+                            bp["id"], rel_path, "modified",
+                            old_content=db_map[rel_path]["content"],
+                            new_content=content,
+                        )
+                    else:
+                        # File matches DB — clear any stale pending change
+                        await version_db.delete_pending_change_by_file(bp["id"], rel_path)
+                else:
+                    await self._upsert_pending_change(
+                        bp["id"], rel_path, "added",
+                        old_content=None, new_content=content,
+                    )
+
+            for db_path in db_map:
+                if db_path not in seen_paths:
+                    await self._upsert_pending_change(
+                        bp["id"], db_path, "deleted",
+                        old_content=db_map[db_path]["content"],
+                        new_content=None,
+                    )
+
+    def _collect_blueprint_files(self, bp_dir: Path) -> list[tuple[str, Path]]:
+        """Collect managed files from a blueprint directory."""
+        files = []
+        for f in bp_dir.iterdir():
+            if f.is_file() and f.suffix.lower() == '.md':
+                files.append((f.name, f))
+        skills_dir = bp_dir / "skills"
+        if skills_dir.exists():
+            for root, _, filenames in os.walk(skills_dir):
+                for fname in filenames:
+                    full = Path(root) / fname
+                    rel = str(full.relative_to(bp_dir))
+                    files.append((rel, full))
+        return files
+
+    async def _upsert_pending_change(
+        self, blueprint_id: int, file_path: str, change_type: str,
+        old_content: str | None, new_content: str | None,
+    ):
+        """Create or update a pending change record."""
+        old_hash = version_db.compute_hash(old_content) if old_content else None
+        new_hash = version_db.compute_hash(new_content) if new_content else None
+
+        if old_hash == new_hash:
+            await version_db.delete_pending_change_by_file(blueprint_id, file_path)
+            return
+
+        await version_db.upsert_pending_change(
+            blueprint_id=blueprint_id, file_path=file_path,
+            change_type=change_type, old_content=old_content,
+            new_content=new_content, old_hash=old_hash, new_hash=new_hash,
+        )
+
     def _check_likely_openclaw(self, agent_name: str) -> bool:
         """Heuristic: check if any .jsonl.lock files exist for this agent."""
         # OpenClaw session data path

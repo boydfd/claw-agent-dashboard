@@ -1,7 +1,7 @@
 """Template service — CRUD, lazy-load, render to disk, batch-apply."""
 from . import version_db
 from .template_engine import render_template
-from .variable_service import get_raw_variables_for_agent
+from .variable_service import get_raw_variables_for_agent, get_raw_variables_for_derived_agent
 from .file_service import read_file, write_file
 
 
@@ -14,10 +14,31 @@ async def list_templates_for_agent(agent_id: int) -> list[dict]:
 
 
 async def lookup_or_create(agent_id: int, file_path: str) -> dict:
-    """Look up template by (agent_id, file_path). If not found, create from actual file."""
+    """Look up template by (agent_id, file_path).
+
+    For derived agents: returns the blueprint's raw template (with !{VAR}
+    placeholders) instead of lazy-loading rendered content from disk.
+    Only if the file is overridden does the derived agent have its own
+    template record, and that record is returned directly.
+
+    For non-derived agents: lazy-creates a template from the file on disk
+    if no record exists.
+    """
+    # Check if agent already has its own template record (override case)
     template = await version_db.get_template_by_path(agent_id, file_path)
     if template:
         return template
+
+    # Check if this is a derived agent — if so, inherit from blueprint
+    derivation = await version_db.get_derivation_by_agent_id(agent_id)
+    if derivation:
+        from . import blueprint_service
+        bp = await version_db.get_blueprint(derivation["blueprint_id"])
+        if bp:
+            bp_template = await version_db.get_template_by_path(bp["agent_id"], file_path)
+            if bp_template:
+                return bp_template
+        # File not in blueprint — fall through to lazy-load (agent-only file)
 
     # Lazy-load: read actual file and create template record
     agent = await _get_agent(agent_id)
@@ -62,13 +83,27 @@ async def update_template(template_id: int, content: str,
     return updated
 
 
-async def render_template_content(template_id: int) -> dict:
-    """Render a template with its agent's variables, return rendered content + warnings."""
+async def render_template_content(template_id: int, requesting_agent_id: int | None = None) -> dict:
+    """Render a template with variables, return rendered content + warnings.
+
+    If requesting_agent_id is provided and differs from the template's owner
+    (i.e. a derived agent viewing a blueprint template), uses the 3-layer
+    variable merge (global → blueprint → agent).
+    """
     template = await version_db.get_template(template_id)
     if not template:
         raise ValueError(f"Template {template_id} not found")
 
-    variables = await get_raw_variables_for_agent(template["agent_id"])
+    owner_agent_id = template["agent_id"]
+
+    if requesting_agent_id and requesting_agent_id != owner_agent_id:
+        # Derived agent viewing a blueprint template — use 3-layer merge
+        variables = await get_raw_variables_for_derived_agent(
+            requesting_agent_id, owner_agent_id
+        )
+    else:
+        variables = await get_raw_variables_for_agent(owner_agent_id)
+
     result = render_template(template["content"], variables)
     return {
         "content": result.content,
