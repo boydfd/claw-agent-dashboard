@@ -190,10 +190,11 @@ class SessionIndexer:
                     continue
 
                 # Check indexed state
-                row = await db.execute_fetchone(
+                cursor = await db.execute(
                     "SELECT indexed_lines, file_size, session_start_datetime FROM session_index_state WHERE agent_name=? AND session_id=?",
                     (agent_name, session_id),
                 )
+                row = await cursor.fetchone()
 
                 if row:
                     prev_size = row[1]
@@ -259,8 +260,15 @@ class SessionIndexer:
                 actions = []
                 for i, line in enumerate(new_lines):
                     try:
-                        msg = json.loads(line.strip())
+                        entry = json.loads(line.strip())
                     except json.JSONDecodeError:
+                        continue
+
+                    # OpenClaw transcript format: {type: "message", message: {role, content}}
+                    if entry.get("type") != "message":
+                        continue
+                    msg = entry.get("message", {})
+                    if not isinstance(msg, dict):
                         continue
 
                     content = msg.get("content")
@@ -286,7 +294,7 @@ class SessionIndexer:
                         "message_index": prev_lines + i,
                         "role": role,
                         "content": content[:10000],  # Limit content size
-                        "timestamp": msg.get("timestamp") or datetime.now(timezone.utc).isoformat(),
+                        "timestamp": entry.get("timestamp") or datetime.now(timezone.utc).isoformat(),
                         "channel": channel or "",
                         "chat_type": chat_type or "",
                     }
