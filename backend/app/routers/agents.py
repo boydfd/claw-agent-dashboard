@@ -12,9 +12,16 @@ router = APIRouter(tags=["agents"])
 async def list_agents():
     """List all discovered agents."""
     agents = scanner.list_agents()
-    # Attach database ID for each agent
+    # Attach database ID and blueprint name for each agent
     for agent in agents:
         agent["id"] = await version_db.get_or_create_agent(agent["name"])
+        # Look up blueprint derivation
+        derivation = await version_db.get_derivation_by_agent_id(agent["id"])
+        if derivation:
+            bp = await version_db.get_blueprint(derivation["blueprint_id"])
+            agent["blueprint_name"] = bp["name"] if bp else None
+        else:
+            agent["blueprint_name"] = None
     return agents
 
 

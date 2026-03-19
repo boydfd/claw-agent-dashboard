@@ -111,6 +111,14 @@ export default {
     memory: 'Memory',
     noAgents: 'No agents found in /agents/',
     translated: 'TR',
+    allBlueprints: 'All Blueprints',
+    collapse: 'Collapse sidebar',
+    expand: 'Expand sidebar',
+  },
+  mainPanel: {
+    sessions: 'Sessions',
+    files: 'Files',
+    selectFile: 'Select a file to view',
   },
   common: {
     cancel: 'Cancel',

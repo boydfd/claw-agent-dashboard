@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import {
   fetchAgents,
   fetchAgentFiles,
@@ -83,6 +83,25 @@ export const useAgentStore = defineStore('agent', () => {
   const availableModels = ref([])
   const defaultModel = ref(null)
 
+  // Per-agent UI state: { currentFile, activeTab }
+  const agentStates = reactive({})
+  // Active tab for current agent
+  const activeTab = ref('sessions')
+  // Blueprint filter
+  const selectedBlueprint = ref(null)
+  // Sidebar collapse
+  const sidebarCollapsed = ref(false)
+
+  const filteredAgents = computed(() => {
+    if (!selectedBlueprint.value) return agents.value
+    return agents.value.filter(a => a.blueprint_name === selectedBlueprint.value)
+  })
+
+  const blueprintOptions = computed(() => {
+    const names = [...new Set(agents.value.map(a => a.blueprint_name).filter(Boolean))]
+    return names.sort()
+  })
+
   // Actions
   async function loadAgents() {
     loading.value = true
@@ -94,12 +113,23 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   async function selectAgent(agent) {
+    // 1. Save outgoing agent state
+    if (currentAgent.value) {
+      agentStates[currentAgent.value.name] = {
+        currentFile: currentFile.value,
+        activeTab: activeTab.value,
+      }
+    }
+
+    // 2. Set new agent, clear transient state
     currentAgent.value = agent
     currentFile.value = null
     currentTranslation.value = null
     showTranslation.value = false
     isEditing.value = false
     selectedFiles.value = new Set()
+
+    // 3. Load new agent data
     loading.value = true
     try {
       const [files, skills, memory, otherFiles] = await Promise.all([
@@ -113,10 +143,19 @@ export const useAgentStore = defineStore('agent', () => {
       agentMemory.value = memory
       agentOtherFiles.value = otherFiles
       skillFilesMap.value = {}
-      // Load agent detail
       await loadAgentDetail()
-      // Load derivation status
       await loadDerivationStatus()
+
+      // 4. Restore per-agent state if it exists
+      const saved = agentStates[agent.name]
+      if (saved) {
+        activeTab.value = saved.activeTab
+        if (saved.currentFile) {
+          await selectFile(saved.currentFile.path)
+        }
+      } else {
+        activeTab.value = 'sessions'
+      }
     } finally {
       loading.value = false
     }
@@ -124,10 +163,16 @@ export const useAgentStore = defineStore('agent', () => {
 
   async function selectAgentByName(shortName) {
     if (!shortName) {
+      // Save outgoing agent state before clearing
+      if (currentAgent.value) {
+        agentStates[currentAgent.value.name] = {
+          currentFile: currentFile.value,
+          activeTab: activeTab.value,
+        }
+      }
       currentAgent.value = null
       return
     }
-    // Ensure agents are loaded
     if (agents.value.length === 0) {
       await loadAgents()
     }
@@ -136,7 +181,17 @@ export const useAgentStore = defineStore('agent', () => {
     if (agent) {
       await selectAgent(agent)
     }
-    // If not found, currentAgent stays null → empty state shown
+  }
+
+  function setActiveTab(tab) {
+    activeTab.value = tab
+    if (currentAgent.value) {
+      if (!agentStates[currentAgent.value.name]) {
+        agentStates[currentAgent.value.name] = { currentFile: currentFile.value, activeTab: tab }
+      } else {
+        agentStates[currentAgent.value.name].activeTab = tab
+      }
+    }
   }
 
   async function loadSkillFiles(skillName) {
@@ -153,6 +208,8 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       currentFile.value = await fetchFileContent(currentAgent.value.name, path)
       editContent.value = currentFile.value.content
+      // Auto-switch to files tab when a file is selected
+      activeTab.value = 'files'
       // Check translation
       if (currentFile.value.has_translation) {
         try {
@@ -278,6 +335,8 @@ export const useAgentStore = defineStore('agent', () => {
       currentFile.value = await fetchGlobalSkillFileContent(source, path)
       currentFile.value._globalSource = source
       editContent.value = currentFile.value.content
+      // Auto-switch to files tab when a global file is selected
+      activeTab.value = 'files'
       // Check translation
       const pseudoAgent = `__global_${source}__`
       if (currentFile.value.has_translation) {
@@ -692,6 +751,14 @@ export const useAgentStore = defineStore('agent', () => {
     saving,
     displayContent,
     displayLanguage,
+    // Sidebar & tab layout
+    agentStates,
+    activeTab,
+    selectedBlueprint,
+    sidebarCollapsed,
+    filteredAgents,
+    blueprintOptions,
+    setActiveTab,
     // Feature 1: Memory
     agentMemory,
     loadMemory,

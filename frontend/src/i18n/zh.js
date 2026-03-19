@@ -111,6 +111,14 @@ export default {
     memory: '记忆',
     noAgents: '未在 /agents/ 中找到 Agent',
     translated: '译',
+    allBlueprints: '全部蓝图',
+    collapse: '收起侧边栏',
+    expand: '展开侧边栏',
+  },
+  mainPanel: {
+    sessions: '会话',
+    files: '文件',
+    selectFile: '选择文件查看',
   },
   common: {
     cancel: '取消',

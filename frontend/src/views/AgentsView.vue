@@ -1,10 +1,13 @@
 <template>
   <el-container class="agents-view">
-    <el-aside width="300px" class="agents-sidebar">
-      <Sidebar />
+    <el-aside
+      :width="agentStore.sidebarCollapsed ? '50px' : '240px'"
+      class="agents-sidebar"
+    >
+      <AgentSidebar />
     </el-aside>
     <el-main class="agents-main">
-      <FileViewer />
+      <MainPanel />
     </el-main>
   </el-container>
 </template>
@@ -14,14 +17,13 @@ import { watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAgentStore } from '../stores/agent'
 import { useDashboardStore } from '../stores/dashboard'
-import Sidebar from '../components/Sidebar.vue'
-import FileViewer from '../components/FileViewer.vue'
+import AgentSidebar from '../components/AgentSidebar.vue'
+import MainPanel from '../components/MainPanel.vue'
 
 const route = useRoute()
 const agentStore = useAgentStore()
 const dashboardStore = useDashboardStore()
 
-// Load dashboard data and start auto-refresh for sidebar status dots
 onMounted(() => {
   dashboardStore.loadAll()
   dashboardStore.startAutoRefresh(10000)
@@ -31,14 +33,13 @@ onUnmounted(() => {
   dashboardStore.stopAutoRefresh()
 })
 
-// Watch route params and select agent
 watch(
   () => route.params.name,
   async (name) => {
     if (name) {
       await agentStore.selectAgentByName(name)
     } else {
-      agentStore.currentAgent = null
+      agentStore.selectAgentByName(null)
     }
   },
   { immediate: true }
@@ -53,12 +54,12 @@ watch(
 .agents-sidebar {
   background: #f5f7fa;
   border-right: 1px solid #e4e7ed;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 0;
+  transition: width 0.2s;
 }
 .agents-main {
   padding: 0;
-  overflow-y: auto;
-  background: #fff;
+  overflow: hidden;
 }
 </style>

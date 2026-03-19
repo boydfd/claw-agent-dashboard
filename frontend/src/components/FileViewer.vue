@@ -1,13 +1,9 @@
 <template>
   <div class="file-viewer">
-    <!-- Empty state -->
-    <div v-if="store.currentAgent && !store.currentFile" class="status-content">
-      <AgentSessions />
-    </div>
-    <div v-else-if="!store.currentFile" class="empty-state">
+    <!-- Empty state: no file selected -->
+    <div v-if="!store.currentFile" class="empty-state">
       <div class="empty-icon">📂</div>
-      <p>{{ t('fileViewer.selectFile') }}</p>
-      <p class="empty-hint">{{ t('fileViewer.expandAgent') }}</p>
+      <p>{{ t('mainPanel.selectFile') }}</p>
     </div>
 
     <!-- File content -->
@@ -77,7 +73,6 @@ import { fetchAgentVariables } from '../api'
 import FileToolbar from './FileToolbar.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import CodeEditor from './CodeEditor.vue'
-import AgentSessions from './AgentSessions.vue'
 import VersionDrawer from './VersionDrawer.vue'
 import AgentVariablesDrawer from './AgentVariablesDrawer.vue'
 
@@ -124,10 +119,6 @@ const highlightedCode = computed(() => {
   display: flex;
   flex-direction: column;
 }
-.status-content {
-  flex: 1;
-  overflow-y: auto;
-}
 .empty-state {
   flex: 1;
   display: flex;
@@ -139,10 +130,6 @@ const highlightedCode = computed(() => {
 .empty-icon {
   font-size: 64px;
   margin-bottom: 16px;
-}
-.empty-hint {
-  font-size: 13px;
-  margin-top: 8px;
 }
 .file-content {
   flex: 1;
