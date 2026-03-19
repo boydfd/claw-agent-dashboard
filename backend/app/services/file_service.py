@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-from ..config import AGENTS_DIR, AGENTS_HOST_DIR
+from ..config import AGENTS_DIR, AGENTS_HOST_DIR, resolve_agent_dir
 
 # Core files to surface (in display order)
 CORE_FILES = [
@@ -46,7 +46,7 @@ def _detect_language(filename: str) -> str:
 
 
 def _agent_path(agent_name: str) -> Path:
-    return Path(AGENTS_DIR) / agent_name
+    return Path(AGENTS_DIR) / resolve_agent_dir(agent_name)
 
 
 def list_agent_files(agent_name: str) -> list[dict]:
@@ -264,7 +264,7 @@ def write_file(agent_name: str, rel_path: str, content: str) -> dict:
 
     file_path.write_text(content, encoding="utf-8")
 
-    host_path = str(Path(AGENTS_HOST_DIR) / agent_name / rel_path)
+    host_path = str(Path(AGENTS_HOST_DIR) / resolve_agent_dir(agent_name) / rel_path)
     return {
         "path": rel_path,
         "name": file_path.name,
@@ -299,7 +299,7 @@ def create_file(agent_name: str, rel_path: str, content: str) -> dict:
 
     file_path.write_text(content, encoding="utf-8")
 
-    host_path = str(Path(AGENTS_HOST_DIR) / agent_name / rel_path)
+    host_path = str(Path(AGENTS_HOST_DIR) / resolve_agent_dir(agent_name) / rel_path)
     return {
         "path": rel_path,
         "name": file_path.name,
@@ -352,7 +352,7 @@ def read_file(agent_name: str, rel_path: str) -> dict | None:
     except Exception:
         return None
 
-    host_path = str(Path(AGENTS_HOST_DIR) / agent_name / rel_path)
+    host_path = str(Path(AGENTS_HOST_DIR) / resolve_agent_dir(agent_name) / rel_path)
 
     return {
         "path": rel_path,

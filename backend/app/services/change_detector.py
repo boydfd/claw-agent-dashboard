@@ -4,7 +4,7 @@ import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from ..config import AGENTS_DIR, SESSION_DATA_DIR
+from ..config import AGENTS_DIR, SESSION_DATA_DIR, resolve_agent_dir
 from ..services import version_db, version_service
 from ..services.file_service import CORE_FILES
 from ..services.scanner import list_agents
@@ -56,7 +56,7 @@ class HashScanDetector(ChangeDetector):
         agents = list_agents()
         for agent in agents:
             agent_name = agent["name"]
-            agent_dir = Path(AGENTS_DIR) / agent_name
+            agent_dir = Path(AGENTS_DIR) / resolve_agent_dir(agent_name)
             if not agent_dir.exists():
                 continue
 

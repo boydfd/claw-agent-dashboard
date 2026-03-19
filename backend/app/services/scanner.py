@@ -56,4 +56,15 @@ def list_agents() -> list[dict]:
                 "path": str(entry),
                 "host_path": str(Path(AGENTS_HOST_DIR) / entry.name),
             })
+
+    # Include the main agent ("workspace" directory without a suffix)
+    main_dir = agents_dir / "workspace"
+    if main_dir.is_dir():
+        agents.insert(0, {
+            "name": "workspace-main",
+            "display_name": _extract_display_name(main_dir),
+            "path": str(main_dir),
+            "host_path": str(Path(AGENTS_HOST_DIR) / "workspace"),
+        })
+
     return agents

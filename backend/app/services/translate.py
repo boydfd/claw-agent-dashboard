@@ -4,7 +4,7 @@ from pathlib import Path
 
 import httpx
 
-from ..config import AGENTS_DIR, DATA_DIR
+from ..config import AGENTS_DIR, DATA_DIR, resolve_agent_dir
 from .config import get_llm_config
 
 
@@ -37,7 +37,7 @@ def translation_exists(agent_name: str, rel_path: str) -> bool:
 async def translate_file(agent_name: str, rel_path: str) -> dict:
     """Translate a file using configured OpenAI-compatible API."""
     # Read original file
-    original_path = Path(AGENTS_DIR) / agent_name / rel_path
+    original_path = Path(AGENTS_DIR) / resolve_agent_dir(agent_name) / rel_path
     if not original_path.exists():
         raise FileNotFoundError(f"File not found: {rel_path}")
 

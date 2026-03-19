@@ -38,3 +38,15 @@ GATEWAY_TOKEN = os.environ.get("GATEWAY_TOKEN", "")
 ES_URL = os.environ.get("ES_URL", "")
 ES_INDEX_PREFIX = os.environ.get("ES_INDEX_PREFIX", "openclaw_sessions")
 ES_SYNC_INTERVAL = int(os.environ.get("ES_SYNC_INTERVAL", "60"))
+
+
+def resolve_agent_dir(agent_name: str) -> str:
+    """Map agent workspace name to actual directory name.
+
+    The main agent uses the 'workspace' directory (no suffix), but the
+    dashboard represents it as 'workspace-main'.  All other agents use
+    'workspace-<short_name>'.
+    """
+    if agent_name == "workspace-main":
+        return "workspace"
+    return agent_name
