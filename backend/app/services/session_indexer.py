@@ -271,6 +271,11 @@ class SessionIndexer:
                     # OpenClaw transcript format: {type: "message", message: {role, content}}
                     if entry.get("type") != "message":
                         continue
+
+                    # Every type=message entry counts as a message for offset alignment with API
+                    current_msg_index = msg_count
+                    msg_count += 1
+
                     msg = entry.get("message", {})
                     if not isinstance(msg, dict):
                         continue
@@ -295,7 +300,7 @@ class SessionIndexer:
                         "session_id": session_id,
                         "session_key": session_key or "",
                         "session_start_datetime": (session_start or row[2]) if row else session_start,
-                        "message_index": msg_count,
+                        "message_index": current_msg_index,
                         "role": role,
                         "content": content[:10000],  # Limit content size
                         "timestamp": entry.get("timestamp") or datetime.now(timezone.utc).isoformat(),
@@ -305,7 +310,6 @@ class SessionIndexer:
 
                     actions.append({"index": {"_index": current_idx}})
                     actions.append(doc)
-                    msg_count += 1
 
                 if actions:
                     await es.bulk(body=actions, refresh="false")
