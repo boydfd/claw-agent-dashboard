@@ -21,9 +21,14 @@ const route = useRoute()
 const agentStore = useAgentStore()
 const dashboardStore = useDashboardStore()
 
-// Load dashboard data once for sidebar status dots
+// Load dashboard data and start auto-refresh for sidebar status dots
 onMounted(() => {
   dashboardStore.loadAll()
+  dashboardStore.startAutoRefresh(10000)
+})
+
+onUnmounted(() => {
+  dashboardStore.stopAutoRefresh()
 })
 
 // Watch route params and select agent
