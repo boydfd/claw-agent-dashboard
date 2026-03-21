@@ -36,8 +36,8 @@
 mkdir claw-agent-dashboard && cd claw-agent-dashboard
 
 # 2. 下载 docker-compose 和环境配置示例
-curl -LO https://raw.githubusercontent.com/openclaw/claw-agent-dashboard/main/docker-compose.yml
-curl -LO https://raw.githubusercontent.com/openclaw/claw-agent-dashboard/main/.env.example
+curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/docker-compose.yml
+curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/.env.example
 cp .env.example .env
 # 编辑 .env 文件，填入你的配置（参见下方"配置说明"）
 
@@ -49,7 +49,7 @@ docker compose up -d
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/openclaw/claw-agent-dashboard.git
+git clone https://github.com/iota3/claw-agent-dashboard.git
 cd claw-agent-dashboard
 
 # 2. 复制并编辑环境配置文件

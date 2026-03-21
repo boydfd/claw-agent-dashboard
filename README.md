@@ -36,8 +36,8 @@ A web dashboard for monitoring and managing [OpenClaw](https://github.com/opencl
 mkdir claw-agent-dashboard && cd claw-agent-dashboard
 
 # 2. Download docker-compose and env example
-curl -LO https://raw.githubusercontent.com/openclaw/claw-agent-dashboard/main/docker-compose.yml
-curl -LO https://raw.githubusercontent.com/openclaw/claw-agent-dashboard/main/.env.example
+curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/docker-compose.yml
+curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/.env.example
 cp .env.example .env
 # Edit .env with your settings (see Configuration below)
 
@@ -49,7 +49,7 @@ docker compose up -d
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/openclaw/claw-agent-dashboard.git
+git clone https://github.com/iota3/claw-agent-dashboard.git
 cd claw-agent-dashboard
 
 # 2. Copy and edit the environment file
