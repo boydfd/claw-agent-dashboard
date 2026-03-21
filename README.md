@@ -9,12 +9,9 @@ A web dashboard for monitoring and managing [OpenClaw](https://github.com/opencl
 ## Features
 
 - **Agent Workspace File Browser** — Browse agent workspace files with syntax highlighting and in-browser editing
-- **Session Viewer** — View agent session history with paginated message display, provider/model info
-- **Blueprint Management** — View, compare, and sync blueprint-to-workspace changes with diff review
-- **Full-text Search** — File content search and Elasticsearch session search with jump-to-result and highlight
+- **Session Viewer** — View agent session history with paginated message display
 - **File Translation** — Translate any file to Chinese using a built-in LLM-powered translation service
-- **File Version History** — Inline diff comparison with redesigned version history panel and one-click restore
-- **Change Detector** — Background disk sync that detects workspace file changes
+- **File Version History** — Compare file versions with diff view and one-click restore
 - **System Metrics Dashboard** — Monitor CPU, memory, disk, and network usage in real time
 - **Gateway Health Monitoring** — Track OpenClaw Gateway status and connectivity
 - **Global Skills Browser** — Explore globally installed OpenClaw skills
@@ -29,35 +26,17 @@ A web dashboard for monitoring and managing [OpenClaw](https://github.com/opencl
 
 ### Steps
 
-**Option A — Docker Hub (recommended)**
-
-```bash
-# 1. Create a project directory
-mkdir claw-agent-dashboard && cd claw-agent-dashboard
-
-# 2. Download docker-compose and env example
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/docker-compose.yml
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/.env.example
-cp .env.example .env
-# Edit .env with your settings (see Configuration below)
-
-# 3. Start the service (pulls image from Docker Hub)
-docker compose up -d
-```
-
-**Option B — Build from source**
-
 ```bash
 # 1. Clone the repository
-git clone https://github.com/iota3/claw-agent-dashboard.git
+git clone https://github.com/openclaw/claw-agent-dashboard.git
 cd claw-agent-dashboard
 
 # 2. Copy and edit the environment file
 cp .env.example .env
 # Edit .env with your settings (see Configuration below)
 
-# 3. Build and start the service
-docker compose up -d --build
+# 3. Start the service
+docker compose up -d
 ```
 
 Access the dashboard at [http://localhost:8080](http://localhost:8080).

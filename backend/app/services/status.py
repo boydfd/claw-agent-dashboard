@@ -565,13 +565,8 @@ def get_agent_detail(agent_name: str) -> dict:
 
         if jsonl_path:
             detail = _extract_session_detail(jsonl_path)
-            # Effective model: modelOverride takes priority over transcript model
-            override = sess.get("model_override")
-            provider_override = sess.get("provider_override")
-            if override:
-                sess["model"] = f"{provider_override}/{override}" if provider_override else override
-            else:
-                sess["model"] = detail["model"]
+            sess["model"] = detail["model"]
+            sess["provider"] = detail["provider"]
             sess["input_tokens"] = detail["input_tokens"]
             sess["output_tokens"] = detail["output_tokens"]
             sess["total_tokens"] = detail["total_tokens"]
@@ -588,6 +583,7 @@ def get_agent_detail(agent_name: str) -> dict:
                 sess["token_summary"] = None
         else:
             sess["model"] = None
+            sess["provider"] = None
             sess["input_tokens"] = 0
             sess["output_tokens"] = 0
             sess["total_tokens"] = 0
@@ -1132,14 +1128,14 @@ async def create_new_session(agent: str, session_key: str | None = None) -> dict
 
 
 async def switch_session_model(agent: str, model: str, session_key: str) -> dict:
-    """Switch the model for an existing session — native OpenClaw parity.
+    """Switch model for an existing session by appending a model_change event.
 
-    OpenClaw's native /model sets `modelOverride` and `providerOverride` in
-    sessions.json, then clears runtime model/contextTokens caches.
-    It does NOT write model_change events to .jsonl.
-
-    Accepts full session key (agent:xxx:...) or channel key variants.
+    Accepts either full session key (agent:xxx:...) or channel key
+    (nextcloud-talk:group:xxx / nextcloud-talk:xxx) for robust matching.
     """
+    import uuid
+    from datetime import datetime, timezone
+
     agent_dir = Path(AGENTS_DIR) / "agents" / agent
     sessions_file = agent_dir / "sessions" / "sessions.json"
 
@@ -1149,15 +1145,13 @@ async def switch_session_model(agent: str, model: str, session_key: str) -> dict
     with open(sessions_file) as f:
         sessions_data = json.load(f)
 
-    # --- Find the target session entry ---
+    # Normalize input session key variants
     input_key = (session_key or "").strip()
     normalized_channel_key = input_key
     if input_key.startswith(f"agent:{agent}:"):
-        normalized_channel_key = input_key[len(f"agent:{agent}:"):]
+        normalized_channel_key = input_key[len(f"agent:{agent}:") :]
     if normalized_channel_key.startswith("nextcloud-talk:group:"):
-        normalized_origin_to = normalized_channel_key.replace(
-            "nextcloud-talk:group:", "nextcloud-talk:", 1
-        )
+        normalized_origin_to = normalized_channel_key.replace("nextcloud-talk:group:", "nextcloud-talk:", 1)
     else:
         normalized_origin_to = normalized_channel_key
 
@@ -1165,6 +1159,7 @@ async def switch_session_model(agent: str, model: str, session_key: str) -> dict
     matched_key = None
     for key, val in sessions_data.items():
         origin_to = (val.get("origin", {}) or {}).get("to") or ""
+
         if (
             key == input_key
             or key == f"agent:{agent}:{normalized_channel_key}"
@@ -1179,41 +1174,43 @@ async def switch_session_model(agent: str, model: str, session_key: str) -> dict
     if entry is None:
         raise ValueError(f"Session not found for key: {session_key}")
 
-    # --- Parse provider/model from the model string ---
+    session_file = entry.get("sessionFile")
+    if not session_file:
+        raise ValueError(f"No sessionFile in session entry for key: {session_key}")
+
+    # Map host absolute path into mounted /agents path if needed
+    sf_path = Path(session_file)
+    session_file_local = sf_path
+    if not sf_path.exists():
+        parts = sf_path.parts
+        try:
+            agents_idx = next(i for i, p in enumerate(parts) if p == "agents" and i + 1 < len(parts))
+            relative = Path(*parts[agents_idx:])
+            session_file_local = Path(AGENTS_DIR) / relative
+        except StopIteration:
+            session_file_local = sf_path
+
     if "/" in model:
         provider, model_id = model.split("/", 1)
     else:
         provider = ""
         model_id = model
 
-    # --- Apply model override (mirrors applyModelOverrideToSessionEntry) ---
-    previous_model = entry.get("modelOverride") or entry.get("model") or "unknown"
-    previous_provider = entry.get("providerOverride") or entry.get("modelProvider") or ""
+    event = {
+        "type": "model_change",
+        "id": uuid.uuid4().hex[:8],
+        "parentId": None,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "provider": provider,
+        "modelId": model_id,
+    }
 
-    # Set overrides
-    entry["modelOverride"] = model_id
-    entry["providerOverride"] = provider
-
-    # Clear runtime model cache (will be re-resolved on next run)
-    for clear_key in [
-        "model", "modelProvider", "contextTokens",
-        "fallbackNoticeSelectedModel", "fallbackNoticeActiveModel",
-        "fallbackNoticeReason",
-    ]:
-        entry.pop(clear_key, None)
-
-    # Update timestamp
-    entry["updatedAt"] = int(time.time() * 1000)
-
-    # --- Persist to sessions.json ---
-    sessions_data[matched_key] = entry
-    with open(sessions_file, "w") as f:
-        json.dump(sessions_data, f, indent=2)
+    with open(session_file_local, "a") as f:
+        f.write(json.dumps(event) + "\n")
 
     return {
         "success": True,
         "model": model,
-        "previous_model": f"{previous_provider}/{previous_model}" if previous_provider else previous_model,
         "session_key": session_key,
         "matched_session_key": matched_key,
     }

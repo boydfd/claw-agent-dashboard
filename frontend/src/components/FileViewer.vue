@@ -6,104 +6,72 @@
       <p>{{ t('mainPanel.selectFile') }}</p>
     </div>
 
-    <!-- File content with optional version history panel -->
-    <div v-else class="file-content-wrapper">
-      <div class="file-content">
-        <!-- Toolbar -->
-        <FileToolbar />
+    <!-- File content -->
+    <div v-else class="file-content">
+      <!-- Toolbar -->
+      <FileToolbar />
 
-        <!-- Version view mode bar -->
-        <div v-if="versionViewState.mode !== 'normal'" class="version-mode-bar">
-          <span v-if="versionViewState.mode === 'view'">
-            {{ t('versionPanel.viewingVersion', { n: versionViewState.versionNum }) }}
-          </span>
-          <span v-else>
-            {{ t('versionPanel.comparingVersion', { n: versionViewState.versionNum }) }}
-          </span>
-          <el-button size="small" @click="exitVersionMode">
-            {{ t('versionPanel.back') }}
-          </el-button>
-        </div>
+      <!-- Template render warnings -->
+      <div v-if="templateStore.renderWarnings.length > 0" class="render-warnings">
+        <el-alert
+          :title="`${templateStore.renderWarnings.length} unresolved variable(s)`"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+      </div>
 
-        <!-- Template render warnings -->
-        <div v-if="templateStore.renderWarnings.length > 0" class="render-warnings">
-          <el-alert
-            :title="`${templateStore.renderWarnings.length} unresolved variable(s)`"
-            type="warning"
-            :closable="false"
-            show-icon
-          />
-        </div>
+      <!-- Loading -->
+      <div v-if="store.loading" class="content-loading">
+        <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+      </div>
 
-        <!-- Loading -->
-        <div v-if="store.loading" class="content-loading">
-          <el-icon class="is-loading" :size="32"><Loading /></el-icon>
-        </div>
+      <!-- Editor mode -->
+      <div v-else-if="store.isEditing" class="editor-wrapper">
+        <CodeEditor
+          :value="store.editContent"
+          :language="store.displayLanguage"
+          :variable-map="variableMap"
+          @update:value="store.editContent = $event"
+        />
+      </div>
 
-        <!-- Compare mode: show diff -->
-        <div v-else-if="versionViewState.mode === 'compare'" class="version-compare-area">
-          <VersionDiffView :diffLines="versionViewState.diffLines" />
-        </div>
-
-        <!-- View mode: read-only content -->
-        <div v-else-if="versionViewState.mode === 'view'" class="version-view-area">
-          <CodeEditor
-            :value="versionViewState.content"
-            :language="store.displayLanguage"
-            :readOnly="true"
-          />
-        </div>
-
-        <!-- Normal: Editor mode -->
-        <div v-else-if="store.isEditing" class="editor-wrapper">
-          <CodeEditor
-            :value="store.editContent"
-            :language="store.displayLanguage"
-            :variable-map="variableMap"
-            @update:value="store.editContent = $event"
-          />
-        </div>
-
-        <!-- Normal: View mode -->
-        <div v-else ref="viewWrapperRef" class="view-wrapper">
-          <MarkdownRenderer
-            v-if="store.displayLanguage === 'markdown'"
-            ref="markdownRef"
-            :content="store.displayContent"
-          />
-          <div v-else class="code-view">
-            <pre class="code-view-pre"><div
-              v-for="line in highlightedLines"
-              :key="line.num"
-              class="code-line"
-              :class="{ 'highlight-fade': line.num === highlightLineNum }"
-              :data-line="line.num"
-              v-html="line.html || '&nbsp;'"
-            ></div></pre>
-          </div>
-        </div>
-
-        <!-- Footer: file path -->
-        <div class="file-footer">
-          <span class="host-path">📁 {{ store.currentFile.host_path }}</span>
+      <!-- View mode -->
+      <div v-else ref="viewWrapperRef" class="view-wrapper">
+        <MarkdownRenderer
+          v-if="store.displayLanguage === 'markdown'"
+          ref="markdownRef"
+          :content="store.displayContent"
+        />
+        <div v-else class="code-view">
+          <pre class="code-view-pre"><div
+            v-for="line in highlightedLines"
+            :key="line.num"
+            class="code-line"
+            :class="{ 'highlight-fade': line.num === highlightLineNum }"
+            :data-line="line.num"
+            v-html="line.html || '&nbsp;'"
+          ></div></pre>
         </div>
       </div>
 
-      <!-- Version History Panel -->
+      <!-- Inline version history panel -->
       <VersionHistoryPanel
         v-if="store.versionDrawerOpen"
         :versions="store.versionList"
         :loading="store.versionLoading"
-        :hasMore="store.versionList.length < store.versionTotal"
-        :fetchContent="handleFetchVersionContent"
-        :onRestore="handleRestoreVersion"
-        :latestContent="store.currentFile?.content || ''"
-        @view="onVersionView"
-        @compare="onVersionCompare"
-        @close="closeVersionHistory"
-        @restore="onVersionRestored"
-        @load-more="store.fetchMoreVersions()"
+        :has-more="store.versionList.length < store.versionTotal"
+        :fetch-content="fetchAgentVersionContent"
+        :on-restore="restoreAgentVersion"
+        @close="store.closeVersionDrawer()"
+        @load-more="store.fetchVersions(20, store.versionList.length)"
+        @restored="onVersionRestored"
       />
+
+      <!-- Footer: file path -->
+      <div class="file-footer">
+        <span class="host-path">📁 {{ store.currentFile.host_path }}</span>
+      </div>
     </div>
 
     <!-- Agent variables drawer -->
@@ -119,12 +87,11 @@ import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 import { useAgentStore } from '../stores/agent'
 import { useTemplateStore } from '../stores/template'
-import { fetchAgentVariables, fetchVersionDetail } from '../api'
+import { fetchAgentVariables } from '../api'
 import FileToolbar from './FileToolbar.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import CodeEditor from './CodeEditor.vue'
 import VersionHistoryPanel from './VersionHistoryPanel.vue'
-import VersionDiffView from './VersionDiffView.vue'
 import AgentVariablesDrawer from './AgentVariablesDrawer.vue'
 
 const { t } = useI18n()
@@ -135,42 +102,20 @@ const viewWrapperRef = ref(null)
 const markdownRef = ref(null)
 const variableMap = ref({})
 
-// Version history view state
-const versionViewState = ref({
-  mode: 'normal',
-  versionNum: null,
-  content: null,
-  diffLines: null,
-})
-
-function exitVersionMode() {
-  versionViewState.value = { mode: 'normal', versionNum: null, content: null, diffLines: null }
+// Version history: fetch content for a version
+async function fetchAgentVersionContent(ver) {
+  const detail = await store.fetchVersionDetail(ver.id)
+  return detail?.content || ''
 }
 
-async function handleFetchVersionContent(version) {
-  const detail = await fetchVersionDetail(version.id)
-  return detail.content
+// Version history: restore a version
+async function restoreAgentVersion(ver) {
+  await store.restoreVersion(ver.id)
 }
 
-async function handleRestoreVersion(version) {
-  await store.restoreVersion(version.id)
-}
-
-function onVersionView({ content, versionNum }) {
-  versionViewState.value = { mode: 'view', versionNum, content, diffLines: null }
-}
-
-function onVersionCompare({ diffLines, versionNum }) {
-  versionViewState.value = { mode: 'compare', versionNum, content: null, diffLines }
-}
-
-function closeVersionHistory() {
-  store.closeVersionDrawer()
-  exitVersionMode()
-}
-
+// After restore, refresh content
 function onVersionRestored() {
-  exitVersionMode()
+  // restoreVersion in the store already refreshes file content and version list
 }
 
 // Load variables when template loads (for CodeEditor hover tooltips)
@@ -329,12 +274,6 @@ watch(() => store.targetLineNumber, async (lineNum) => {
   font-size: 64px;
   margin-bottom: 16px;
 }
-.file-content-wrapper {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
 .file-content {
   flex: 1;
   display: flex;
@@ -375,21 +314,6 @@ watch(() => store.targetLineNumber, async (lineNum) => {
 .code-line.highlight-fade {
   animation: highlight-fade 4s ease-out forwards;
 }
-.version-mode-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 16px;
-  background: rgba(56, 139, 253, 0.1);
-  border-bottom: 1px solid rgba(56, 139, 253, 0.3);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 13px;
-}
-.version-compare-area, .version-view-area {
-  flex: 1;
-  overflow: auto;
-  min-height: 0;
-}
 .file-footer {
   padding: 8px 16px;
   background: #f5f7fa;
@@ -407,6 +331,10 @@ watch(() => store.targetLineNumber, async (lineNum) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.version-history-panel {
+  height: 300px;
+  flex-shrink: 0;
 }
 </style>
 

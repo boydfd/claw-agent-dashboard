@@ -1,7 +1,6 @@
 """Agent scanning service — discovers workspace-* directories."""
 import os
 import re
-import asyncio
 from pathlib import Path
 
 from ..config import AGENTS_DIR, AGENTS_HOST_DIR
@@ -69,8 +68,3 @@ def list_agents() -> list[dict]:
         })
 
     return agents
-
-
-async def list_agents_async() -> list[dict]:
-    """Async wrapper for list_agents — runs sync I/O in a thread."""
-    return await asyncio.to_thread(list_agents)

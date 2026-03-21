@@ -9,12 +9,9 @@
 ## 功能特性
 
 - **智能体工作区文件浏览器** — 浏览智能体工作区文件，支持语法高亮和浏览器内编辑
-- **会话查看器** — 查看智能体会话历史，支持分页消息展示，显示提供商/模型信息
-- **蓝图管理** — 查看、比较和同步蓝图到工作区的变更，支持 diff 审查
-- **全文搜索** — 文件内容搜索和 Elasticsearch 会话搜索，支持跳转和高亮
+- **会话查看器** — 查看智能体会话历史，支持分页消息展示
 - **文件翻译** — 使用内置 LLM 翻译服务将任意文件翻译为中文
-- **文件版本历史** — 重新设计的版本历史面板，内联 diff 比较，支持一键还原
-- **变更检测器** — 后台磁盘同步，自动检测工作区文件变更
+- **文件版本历史** — 通过 diff 视图对比文件版本，支持一键还原
 - **系统指标仪表盘** — 实时监控 CPU、内存、磁盘和网络使用情况
 - **网关健康监控** — 跟踪 OpenClaw Gateway 状态和连接情况
 - **全局技能浏览器** — 浏览全局安装的 OpenClaw 技能
@@ -29,35 +26,17 @@
 
 ### 步骤
 
-**方式 A — Docker Hub（推荐）**
-
-```bash
-# 1. 创建项目目录
-mkdir claw-agent-dashboard && cd claw-agent-dashboard
-
-# 2. 下载 docker-compose 和环境配置示例
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/docker-compose.yml
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/.env.example
-cp .env.example .env
-# 编辑 .env 文件，填入你的配置（参见下方"配置说明"）
-
-# 3. 启动服务（从 Docker Hub 拉取镜像）
-docker compose up -d
-```
-
-**方式 B — 从源码构建**
-
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/iota3/claw-agent-dashboard.git
+git clone https://github.com/openclaw/claw-agent-dashboard.git
 cd claw-agent-dashboard
 
 # 2. 复制并编辑环境配置文件
 cp .env.example .env
 # 编辑 .env 文件，填入你的配置（参见下方"配置说明"）
 
-# 3. 构建并启动服务
-docker compose up -d --build
+# 3. 启动服务
+docker compose up -d
 ```
 
 访问仪表盘：[http://localhost:8080](http://localhost:8080)。

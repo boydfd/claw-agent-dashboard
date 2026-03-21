@@ -1,6 +1,5 @@
 services:
   claw-agent-dashboard:
-    image: iota3/claw-agent-dashboard:latest
     build:
       context: .
       args:

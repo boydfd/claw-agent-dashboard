@@ -73,7 +73,8 @@
         v-if="store.isVersionManaged"
         size="small"
         :icon="Clock"
-        @click="store.openVersionDrawer()"
+        :type="store.versionDrawerOpen ? 'primary' : 'default'"
+        @click="store.versionDrawerOpen ? store.closeVersionDrawer() : store.openVersionDrawer()"
       >{{ t('fileToolbar.versionHistory') }}</el-button>
 
       <!-- Variables button -->

@@ -26,9 +26,6 @@ RUN groupadd -g 1000 appuser && useradd -u 1000 -g 1000 -m appuser
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir -i ${PIP_INDEX_URL} -r backend/requirements.txt
 
-# Copy supervisord config
-COPY supervisord.conf ./supervisord.conf
-
 # Copy backend code
 COPY backend/ ./backend/
 
@@ -42,4 +39,4 @@ USER appuser
 
 EXPOSE 8080
 
-CMD ["supervisord", "-c", "supervisord.conf"]
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8080"]
