@@ -217,6 +217,17 @@ async def update_blueprint_file(
     disk_file.parent.mkdir(parents=True, exist_ok=True)
     disk_file.write_text(content, encoding="utf-8")
 
+    # Create version record for blueprint file history
+    content_hash = version_db.compute_hash(content)
+    await version_db.create_version(
+        agent_id=bp["agent_id"],
+        file_path=file_path,
+        content=content,
+        content_hash=content_hash,
+        source="dashboard",
+        commit_msg="Blueprint file updated",
+    )
+
     # Clear any pending change for this file
     await version_db.delete_pending_change_by_file(blueprint_id, file_path)
 
