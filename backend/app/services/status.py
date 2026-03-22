@@ -3,7 +3,7 @@ import os
 import re
 import time
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -565,8 +565,13 @@ def get_agent_detail(agent_name: str) -> dict:
 
         if jsonl_path:
             detail = _extract_session_detail(jsonl_path)
-            sess["model"] = detail["model"]
-            sess["provider"] = detail["provider"]
+            # Effective model: modelOverride takes priority over transcript model
+            override = sess.get("model_override")
+            provider_override = sess.get("provider_override")
+            if override:
+                sess["model"] = f"{provider_override}/{override}" if provider_override else override
+            else:
+                sess["model"] = detail["model"]
             sess["input_tokens"] = detail["input_tokens"]
             sess["output_tokens"] = detail["output_tokens"]
             sess["total_tokens"] = detail["total_tokens"]
@@ -583,7 +588,6 @@ def get_agent_detail(agent_name: str) -> dict:
                 sess["token_summary"] = None
         else:
             sess["model"] = None
-            sess["provider"] = None
             sess["input_tokens"] = 0
             sess["output_tokens"] = 0
             sess["total_tokens"] = 0
@@ -990,7 +994,6 @@ async def create_new_session(agent: str, session_key: str | None = None) -> dict
     When omitted, we find the first nextcloud-talk:group session for the agent.
     """
     import uuid
-    from datetime import datetime, timezone
 
     agent_dir = Path(AGENTS_DIR) / "agents" / agent
     sessions_file = agent_dir / "sessions" / "sessions.json"
@@ -1101,11 +1104,15 @@ async def create_new_session(agent: str, session_key: str | None = None) -> dict
         f"Current time: {time_line}"
     )
 
-    # Send as a regular message via Gateway (not /new — that won't trigger reset)
+    # Send as a streaming request via Gateway — fire-and-forget style.
+    # We only wait for the first SSE event (response.created) to confirm the
+    # Gateway accepted the request, then close the connection.  The agent will
+    # process the prompt asynchronously.
     url = f"{GATEWAY_URL}/v1/responses"
     body = {
         "model": f"openclaw:{agent}",
         "input": reset_prompt,
+        "stream": True,
     }
     headers = {"Content-Type": "application/json"}
     if GATEWAY_TOKEN:
@@ -1113,29 +1120,34 @@ async def create_new_session(agent: str, session_key: str | None = None) -> dict
     # Bind to the session key so Gateway routes to the right session
     headers["x-openclaw-session-key"] = target_key
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        resp = await client.post(url, json=body, headers=headers)
-        resp.raise_for_status()
-        result = resp.json()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        async with client.stream("POST", url, json=body, headers=headers) as resp:
+            resp.raise_for_status()
+            # Read just the first chunk to confirm acceptance, then close
+            first_event = None
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    first_event = json.loads(line[6:])
+                    break
 
     return {
         "success": True,
         "previous_session_id": old_entry.get("sessionId"),
         "new_session_id": new_session_id,
         "session_key": target_key,
-        "agent_response": result,
+        "agent_response": first_event or {"status": "accepted"},
     }
 
 
 async def switch_session_model(agent: str, model: str, session_key: str) -> dict:
-    """Switch model for an existing session by appending a model_change event.
+    """Switch the model for an existing session — native OpenClaw parity.
 
-    Accepts either full session key (agent:xxx:...) or channel key
-    (nextcloud-talk:group:xxx / nextcloud-talk:xxx) for robust matching.
+    OpenClaw's native /model sets `modelOverride` and `providerOverride` in
+    sessions.json, then clears runtime model/contextTokens caches.
+    It does NOT write model_change events to .jsonl.
+
+    Accepts full session key (agent:xxx:...) or channel key variants.
     """
-    import uuid
-    from datetime import datetime, timezone
-
     agent_dir = Path(AGENTS_DIR) / "agents" / agent
     sessions_file = agent_dir / "sessions" / "sessions.json"
 
@@ -1145,13 +1157,15 @@ async def switch_session_model(agent: str, model: str, session_key: str) -> dict
     with open(sessions_file) as f:
         sessions_data = json.load(f)
 
-    # Normalize input session key variants
+    # --- Find the target session entry ---
     input_key = (session_key or "").strip()
     normalized_channel_key = input_key
     if input_key.startswith(f"agent:{agent}:"):
-        normalized_channel_key = input_key[len(f"agent:{agent}:") :]
+        normalized_channel_key = input_key[len(f"agent:{agent}:"):]
     if normalized_channel_key.startswith("nextcloud-talk:group:"):
-        normalized_origin_to = normalized_channel_key.replace("nextcloud-talk:group:", "nextcloud-talk:", 1)
+        normalized_origin_to = normalized_channel_key.replace(
+            "nextcloud-talk:group:", "nextcloud-talk:", 1
+        )
     else:
         normalized_origin_to = normalized_channel_key
 
@@ -1159,7 +1173,6 @@ async def switch_session_model(agent: str, model: str, session_key: str) -> dict
     matched_key = None
     for key, val in sessions_data.items():
         origin_to = (val.get("origin", {}) or {}).get("to") or ""
-
         if (
             key == input_key
             or key == f"agent:{agent}:{normalized_channel_key}"
@@ -1174,43 +1187,162 @@ async def switch_session_model(agent: str, model: str, session_key: str) -> dict
     if entry is None:
         raise ValueError(f"Session not found for key: {session_key}")
 
-    session_file = entry.get("sessionFile")
-    if not session_file:
-        raise ValueError(f"No sessionFile in session entry for key: {session_key}")
-
-    # Map host absolute path into mounted /agents path if needed
-    sf_path = Path(session_file)
-    session_file_local = sf_path
-    if not sf_path.exists():
-        parts = sf_path.parts
-        try:
-            agents_idx = next(i for i, p in enumerate(parts) if p == "agents" and i + 1 < len(parts))
-            relative = Path(*parts[agents_idx:])
-            session_file_local = Path(AGENTS_DIR) / relative
-        except StopIteration:
-            session_file_local = sf_path
-
+    # --- Parse provider/model from the model string ---
     if "/" in model:
         provider, model_id = model.split("/", 1)
     else:
         provider = ""
         model_id = model
 
-    event = {
-        "type": "model_change",
-        "id": uuid.uuid4().hex[:8],
-        "parentId": None,
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "provider": provider,
-        "modelId": model_id,
-    }
+    # --- Apply model override (mirrors applyModelOverrideToSessionEntry) ---
+    previous_model = entry.get("modelOverride") or entry.get("model") or "unknown"
+    previous_provider = entry.get("providerOverride") or entry.get("modelProvider") or ""
 
-    with open(session_file_local, "a") as f:
-        f.write(json.dumps(event) + "\n")
+    # Set overrides
+    entry["modelOverride"] = model_id
+    entry["providerOverride"] = provider
+
+    # Clear runtime model cache (will be re-resolved on next run)
+    for clear_key in [
+        "model", "modelProvider", "contextTokens",
+        "fallbackNoticeSelectedModel", "fallbackNoticeActiveModel",
+        "fallbackNoticeReason",
+    ]:
+        entry.pop(clear_key, None)
+
+    # Update timestamp
+    entry["updatedAt"] = int(time.time() * 1000)
+
+    # --- Persist to sessions.json ---
+    sessions_data[matched_key] = entry
+    with open(sessions_file, "w") as f:
+        json.dump(sessions_data, f, indent=2)
 
     return {
         "success": True,
         "model": model,
+        "previous_model": f"{previous_provider}/{previous_model}" if previous_provider else previous_model,
         "session_key": session_key,
         "matched_session_key": matched_key,
     }
+
+# ---------------------------------------------------------------------------
+# Envelope formatting (session compose)
+# ---------------------------------------------------------------------------
+
+def _format_elapsed(delta: timedelta) -> str:
+    """Format a timedelta as a compact elapsed string (e.g., '3m', '2h', '1d')."""
+    total_seconds = int(delta.total_seconds())
+    if total_seconds <= 0:
+        return ""
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    minutes = total_seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h"
+    days = hours // 24
+    return f"{days}d"
+
+
+def format_envelope_message(
+    message: str,
+    channel: str,
+    from_name: str,
+    chat_type: str,
+    timestamp,
+    previous_timestamp=None,
+) -> str:
+    """Format a message with OpenClaw-compatible envelope header."""
+    parts = [channel]
+
+    elapsed = ""
+    if previous_timestamp:
+        delta = timestamp - previous_timestamp
+        elapsed = _format_elapsed(delta)
+
+    if from_name:
+        parts.append(f"{from_name} +{elapsed}" if elapsed else from_name)
+    elif elapsed:
+        parts.append(f"+{elapsed}")
+
+    weekday = timestamp.strftime("%a")
+    ts_str = timestamp.strftime("%Y-%m-%d %H:%M")
+    parts.append(f"{weekday} {ts_str}")
+
+    header = f"[{' '.join(parts)}]"
+
+    if chat_type != "direct" and from_name:
+        return f"{header} {from_name}: {message}"
+    else:
+        return f"{header} {message}"
+
+
+async def send_session_message(
+    agent: str,
+    session_key: str,
+    message: str,
+    mode: str = "raw",
+    envelope_channel: str = "",
+    envelope_sender: str = "",
+    envelope_chat_type: str = "group",
+) -> dict:
+    """Send a compose message to an agent session via Gateway."""
+    agent_sessions_dir = os.path.join(AGENTS_DIR, "agents", agent, "sessions")
+    sessions_path = os.path.join(agent_sessions_dir, "sessions.json")
+
+    session_entry = {}
+    if os.path.isfile(sessions_path):
+        with open(sessions_path, "r") as f:
+            sessions_data = json.load(f)
+        # Find session entry by key (exact match first, then suffix)
+        session_entry = sessions_data.get(session_key, {})
+        if not session_entry:
+            for k, v in sessions_data.items():
+                if k.endswith(session_key) or session_key.endswith(k):
+                    session_entry = v
+                    break
+
+    # Build text based on mode
+    if mode == "envelope" and envelope_sender:
+        previous_ts = session_entry.get("updatedAt")
+        previous_timestamp = None
+        if previous_ts:
+            previous_timestamp = datetime.fromtimestamp(previous_ts / 1000, tz=timezone.utc)
+        text = format_envelope_message(
+            message=message,
+            channel=envelope_channel or "agent-preview",
+            from_name=envelope_sender,
+            chat_type=envelope_chat_type,
+            timestamp=datetime.now(timezone.utc),
+            previous_timestamp=previous_timestamp,
+        )
+    else:
+        text = message
+
+    # Fire-and-forget to Gateway (same pattern as create_new_session)
+    if not GATEWAY_URL:
+        return {"ok": False, "error": "Gateway URL not configured"}
+
+    url = f"{GATEWAY_URL}/v1/responses"
+    headers = {"Content-Type": "application/json"}
+    if GATEWAY_TOKEN:
+        headers["Authorization"] = f"Bearer {GATEWAY_TOKEN}"
+    headers["x-openclaw-session-key"] = session_key
+
+    body = {
+        "model": f"openclaw:{agent}",
+        "input": text,
+        "stream": True,
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        async with client.stream("POST", url, json=body, headers=headers) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if line.startswith("data:"):
+                    break
+
+    return {"ok": True, "session_id": session_entry.get("sessionId", "")}

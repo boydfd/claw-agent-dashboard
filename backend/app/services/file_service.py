@@ -1,5 +1,6 @@
 """File service — reads files, detects language, builds file tree."""
 import os
+import asyncio
 from pathlib import Path
 
 from ..config import AGENTS_DIR, AGENTS_HOST_DIR, resolve_agent_dir
@@ -361,3 +362,33 @@ def read_file(agent_name: str, rel_path: str) -> dict | None:
         "language": _detect_language(file_path.name),
         "host_path": host_path,
     }
+
+
+# --- Async wrappers (for use in route handlers) ---
+
+async def list_agent_files_async(agent_name: str) -> list[dict]:
+    return await asyncio.to_thread(list_agent_files, agent_name)
+
+async def list_memory_files_async(agent_name: str) -> list[dict]:
+    return await asyncio.to_thread(list_memory_files, agent_name)
+
+async def list_other_files_async(agent_name: str) -> list[dict]:
+    return await asyncio.to_thread(list_other_files, agent_name)
+
+async def list_agent_skills_async(agent_name: str) -> list[dict]:
+    return await asyncio.to_thread(list_agent_skills, agent_name)
+
+async def list_skill_files_async(agent_name: str, skill_name: str) -> list[dict]:
+    return await asyncio.to_thread(list_skill_files, agent_name, skill_name)
+
+async def read_file_async(agent_name: str, rel_path: str) -> dict | None:
+    return await asyncio.to_thread(read_file, agent_name, rel_path)
+
+async def write_file_async(agent_name: str, rel_path: str, content: str) -> dict:
+    return await asyncio.to_thread(write_file, agent_name, rel_path, content)
+
+async def create_file_async(agent_name: str, rel_path: str, content: str) -> dict:
+    return await asyncio.to_thread(create_file, agent_name, rel_path, content)
+
+async def delete_file_async(agent_name: str, rel_path: str) -> bool:
+    return await asyncio.to_thread(delete_file, agent_name, rel_path)

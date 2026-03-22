@@ -69,6 +69,16 @@ export const createNewSession = (agent, sessionKey = null) =>
 export const switchSessionModel = (agent, model, sessionKey) =>
   api.post('/status/session/model', { agent, model, session_key: sessionKey }).then(r => r.data)
 
+export function sendSessionMessage(agent, sessionKey, message, mode, envelopeContext) {
+  return api.post('/status/session/send', {
+    agent,
+    session_key: sessionKey,
+    message,
+    mode,
+    envelope_context: envelopeContext,
+  }).then(r => r.data)
+}
+
 // Settings
 export const fetchSettings = () => api.get('/settings').then(r => r.data)
 export const updateSettings = (data) => api.put('/settings', data).then(r => r.data)
@@ -115,11 +125,14 @@ export const updateBlueprint = (id, data) => api.put(`/blueprints/${id}`, data).
 export const deleteBlueprint = (id, confirm = false) => api.delete(`/blueprints/${id}`, { params: { confirm } }).then(r => r.data)
 
 // Blueprint files
+// Encode each path segment for URL safety while preserving / separators
+const encodeFilePath = (p) => p.split('/').map(encodeURIComponent).join('/')
+
 export const fetchBlueprintFiles = (id) => api.get(`/blueprints/${id}/files`).then(r => r.data)
 export const addBlueprintFile = (id, data) => api.post(`/blueprints/${id}/files`, data).then(r => r.data)
-export const fetchBlueprintFile = (id, filePath) => api.get(`/blueprints/${id}/files/${filePath}`).then(r => r.data)
-export const updateBlueprintFile = (id, filePath, content) => api.put(`/blueprints/${id}/files/${filePath}`, { content }).then(r => r.data)
-export const deleteBlueprintFile = (id, filePath) => api.delete(`/blueprints/${id}/files/${filePath}`).then(r => r.data)
+export const fetchBlueprintFile = (id, filePath) => api.get(`/blueprints/${id}/files/${encodeFilePath(filePath)}`).then(r => r.data)
+export const updateBlueprintFile = (id, filePath, content) => api.put(`/blueprints/${id}/files/${encodeFilePath(filePath)}`, { content }).then(r => r.data)
+export const deleteBlueprintFile = (id, filePath) => api.delete(`/blueprints/${id}/files/${encodeFilePath(filePath)}`).then(r => r.data)
 
 // Blueprint variables and derivations
 export const fetchBlueprintVariables = (id) => api.get(`/blueprints/${id}/variables`).then(r => r.data)
@@ -147,11 +160,9 @@ export const acceptAllAgentPendingChanges = (agentName) => api.post(`/agents/${a
 export const rejectAllAgentPendingChanges = (agentName) => api.post(`/agents/${agentName}/pending-changes/reject-all`).then(r => r.data)
 
 // Blueprint file versions
-export const fetchBlueprintFileVersions = (bpId, filePath) => api.get(`/blueprints/${bpId}/files/${filePath}/versions`).then(r => r.data)
-export const fetchBlueprintFileVersion = (bpId, filePath, versionNum) => api.get(`/blueprints/${bpId}/files/${filePath}/versions/${versionNum}`).then(r => r.data)
-export const restoreBlueprintFileVersion = (bpId, filePath, versionNum) => api.post(`/blueprints/${bpId}/files/${filePath}/restore/${versionNum}`).then(r => r.data)
-export const fetchBlueprintFileDiff = (bpId, filePath, fromVersionNum, toVersionNum) =>
-  api.get(`/blueprints/${bpId}/files/${filePath}/diff`, { params: { from_version_num: fromVersionNum, to_version_num: toVersionNum } }).then(r => r.data)
+export const fetchBlueprintFileVersions = (bpId, filePath, limit = 20, offset = 0) => api.get(`/blueprints/${bpId}/files/${encodeFilePath(filePath)}/versions`, { params: { limit, offset } }).then(r => r.data)
+export const fetchBlueprintFileVersion = (bpId, filePath, versionNum) => api.get(`/blueprints/${bpId}/files/${encodeFilePath(filePath)}/versions/${versionNum}`).then(r => r.data)
+export const restoreBlueprintFileVersion = (bpId, filePath, versionNum) => api.post(`/blueprints/${bpId}/files/${encodeFilePath(filePath)}/restore/${versionNum}`).then(r => r.data)
 
 // Search
 export const fetchSearchStatus = () => api.get('/search/status').then(r => r.data)

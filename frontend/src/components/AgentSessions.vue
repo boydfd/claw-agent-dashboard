@@ -25,9 +25,13 @@
 
     <!-- Sessions split pane -->
     <template v-else>
-      <div v-if="detail.agent.sessions.length" class="split-pane">
-        <!-- Left: Session list -->
-        <div class="session-list-panel" :style="{ width: leftPanelWidth + 'px' }">
+      <div v-if="detail.agent.sessions.length" class="split-pane" :class="{ 'mobile-layout': isMobile }">
+        <!-- Left: Session list (desktop always, mobile when no session selected) -->
+        <div
+          v-if="!isMobile || !store.selectedSessionId"
+          class="session-list-panel"
+          :style="!isMobile ? { width: leftPanelWidth + 'px' } : {}"
+        >
           <div class="session-list-header">
             <span class="session-list-title">{{ t('agentSessions.sessions') }}</span>
             <div style="display: flex; gap: 6px;">
@@ -108,14 +112,27 @@
           </div>
         </div>
 
-        <!-- Draggable divider -->
-        <div class="split-divider" @mousedown="startDrag">
+        <!-- Draggable divider (desktop only) -->
+        <div v-if="!isMobile" class="split-divider" @mousedown="startDrag">
           <div class="divider-line"></div>
         </div>
 
-        <!-- Right: Message content -->
-        <div class="message-panel">
+        <!-- Right: Message content (desktop always, mobile when session selected) -->
+        <div
+          v-if="!isMobile || store.selectedSessionId"
+          class="message-panel"
+        >
           <template v-if="store.selectedSessionId">
+            <!-- Mobile back button + action buttons -->
+            <div v-if="isMobile" class="mobile-back-bar">
+              <el-button text @click="mobileBackToList">
+                <el-icon><ArrowLeft /></el-icon> {{ t('agentSessions.sessions') }}
+              </el-button>
+              <div class="mobile-back-actions">
+                <el-button size="small" @click="openSwitchModel">{{ t('agentSessions.switchModel') }}</el-button>
+                <el-button size="small" type="primary" :icon="Plus" @click="openNewSession">{{ t('agentSessions.newBtn') }}</el-button>
+              </div>
+            </div>
             <SessionMessages
               :messages="currentMessages"
               :total="currentTotal"
@@ -123,6 +140,9 @@
               :page-size="store.sessionPageSize"
               :loading="currentLoading"
               :target-message-index="store.targetMessageIndex"
+              :session-key="store.selectedSessionKey || ''"
+              :agent-name="agentName"
+              :session-status="currentSessionStatus"
               @page-change="onPageChange"
               @highlight-done="store.targetMessageIndex = null"
             />
@@ -208,7 +228,7 @@
 
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue'
-import { Loading, Refresh, ChatDotRound, Plus, Search } from '@element-plus/icons-vue'
+import { Loading, Refresh, ChatDotRound, Plus, Search, ArrowLeft } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAgentStore } from '../stores/agent'
 import SessionMessages from './SessionMessages.vue'
@@ -216,6 +236,9 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 
 const store = useAgentStore()
+
+import { useResponsive } from '../composables/useResponsive'
+const { isMobile } = useResponsive()
 
 // Split pane state
 const leftPanelWidth = ref(340)
@@ -289,6 +312,17 @@ const currentLoading = computed(() => {
   return sid ? (store.sessionMessagesLoading[sid] || false) : false
 })
 
+const agentName = computed(() => store.currentAgent?.name?.replace('workspace-', '') || '')
+
+const currentSessionStatus = computed(() => {
+  const sid = store.selectedSessionId
+  if (!sid) return ''
+  const sessions = store.sessions?.[store.currentAgent?.name] || []
+  const sess = sessions.find(s => s.session_id === sid)
+  if (!sess) return ''
+  return sess.has_lock ? 'working' : ''
+})
+
 function sessionDotClass(sess) {
   if (sess.aborted) return 'dot-error'
   if (sess.has_lock) return 'dot-working'
@@ -319,7 +353,11 @@ function shortModel(model, provider) {
 }
 
 function onSelectSession(sess) {
-  store.selectSession(sess.session_id)
+  store.selectSession(sess.session_id, sess.session_key)
+}
+
+function mobileBackToList() {
+  store.selectedSessionId = null
 }
 
 function onPageChange(page) {
@@ -705,5 +743,48 @@ onUnmounted(() => {
   font-size: 10px;
   color: var(--el-text-color-placeholder);
   margin-top: 4px;
+}
+
+/* Mobile two-step layout */
+.split-pane.mobile-layout {
+  flex-direction: column;
+}
+.split-pane.mobile-layout .session-list-panel {
+  width: 100% !important;
+  border-right: none;
+  flex: 1;
+}
+.split-pane.mobile-layout .message-panel {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.mobile-back-bar {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.mobile-back-actions {
+  display: flex;
+  gap: 6px;
+}
+
+@media (max-width: 768px) {
+  .agent-sessions {
+    padding: 12px;
+  }
+  .status-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .status-bar-left h2 {
+    font-size: 15px;
+  }
+  .session-card-compact {
+    min-height: 44px;
+  }
 }
 </style>

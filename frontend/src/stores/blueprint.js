@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { ElMessage } from 'element-plus'
 import {
   fetchBlueprints,
   createBlueprint as apiCreate,
@@ -50,9 +51,8 @@ export const useBlueprintStore = defineStore('blueprint', () => {
   const versionDrawerOpen = ref(false)
   const versionFilePath = ref(null)
   const versionList = ref([])
+  const versionTotal = ref(0)
   const versionLoading = ref(false)
-  const versionPreviewContent = ref(null)
-  const versionPreviewNum = ref(null)
 
   // File search
   const fileSearchQuery = ref('')
@@ -233,12 +233,16 @@ export const useBlueprintStore = defineStore('blueprint', () => {
     if (!currentBlueprint.value) return
     versionFilePath.value = filePath
     versionList.value = []
-    versionPreviewContent.value = null
-    versionPreviewNum.value = null
+    versionTotal.value = 0
     versionDrawerOpen.value = true
     versionLoading.value = true
     try {
-      versionList.value = await fetchBlueprintFileVersions(currentBlueprint.value.id, filePath)
+      const data = await fetchBlueprintFileVersions(currentBlueprint.value.id, filePath)
+      versionList.value = data.versions
+      versionTotal.value = data.total
+    } catch (e) {
+      console.error('[blueprint] Failed to load version history:', e)
+      ElMessage.error(e?.response?.data?.detail || e.message || 'Failed to load version history')
     } finally {
       versionLoading.value = false
     }
@@ -248,27 +252,33 @@ export const useBlueprintStore = defineStore('blueprint', () => {
     versionDrawerOpen.value = false
     versionFilePath.value = null
     versionList.value = []
-    versionPreviewContent.value = null
-    versionPreviewNum.value = null
+    versionTotal.value = 0
   }
 
-  async function viewVersion(filePath, versionNum) {
-    if (!currentBlueprint.value) return
-    const version = await fetchBlueprintFileVersion(currentBlueprint.value.id, filePath, versionNum)
-    versionPreviewContent.value = version.content
-    versionPreviewNum.value = version.version_num
+  async function fetchMoreVersions() {
+    if (!currentBlueprint.value || !versionFilePath.value) return
+    versionLoading.value = true
+    try {
+      const data = await fetchBlueprintFileVersions(
+        currentBlueprint.value.id, versionFilePath.value, 20, versionList.value.length
+      )
+      versionList.value.push(...data.versions)
+      versionTotal.value = data.total
+    } finally {
+      versionLoading.value = false
+    }
   }
 
   async function restoreVersion(filePath, versionNum) {
     if (!currentBlueprint.value) return
     await restoreBlueprintFileVersion(currentBlueprint.value.id, filePath, versionNum)
-    // Refresh version list
-    versionList.value = await fetchBlueprintFileVersions(currentBlueprint.value.id, filePath)
-    // Refresh the current file if it's the same
-    if (currentFile.value?.file_path === filePath) {
-      const template = await fetchBlueprintFile(currentBlueprint.value.id, filePath)
-      currentFile.value.content = template.content
-      editContent.value = template.content
+    const data = await fetchBlueprintFileVersions(
+      currentBlueprint.value.id, filePath, 20, 0
+    )
+    versionList.value = data.versions
+    versionTotal.value = data.total
+    if (currentFile.value && currentFile.value.file_path === filePath) {
+      await selectFile(currentFile.value.file_path)
     }
   }
 
@@ -310,9 +320,8 @@ export const useBlueprintStore = defineStore('blueprint', () => {
     acceptChange, rejectChange, acceptAllChanges,
     startPendingPolling, stopPendingPolling,
     // Version history
-    versionDrawerOpen, versionFilePath, versionList, versionLoading,
-    versionPreviewContent, versionPreviewNum,
-    openVersionDrawer, closeVersionDrawer, viewVersion, restoreVersion,
+    versionDrawerOpen, versionFilePath, versionList, versionTotal, versionLoading,
+    openVersionDrawer, closeVersionDrawer, fetchMoreVersions, restoreVersion,
     // File search
     fileSearchQuery, fileSearchResults, fileSearchLoading,
     searchBlueprintFiles, clearFileSearch,

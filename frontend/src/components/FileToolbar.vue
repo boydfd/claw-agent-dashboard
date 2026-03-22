@@ -14,7 +14,7 @@
       >📌 From blueprint (will detach on save)</el-tag>
     </div>
     <div class="toolbar-right">
-      <!-- Restore to Blueprint button (for overridden files in derived agents) -->
+      <!-- Restore to Blueprint button (always visible when applicable) -->
       <el-popconfirm
         v-if="store.derivationStatus?.is_derived && store.isFileOverridden(store.currentFile?.path)"
         title="Restore this file to its blueprint version? Your local changes will be lost."
@@ -30,62 +30,64 @@
         </template>
       </el-popconfirm>
 
-      <!-- Batch translate button -->
-      <el-button
-        v-if="store.selectedFiles.size > 0"
-        size="small"
-        type="warning"
-        :icon="MagicStick"
-        :loading="store.batchTranslating"
-        @click="doBatchTranslate"
-      >
-        {{ store.batchTranslating
-          ? t('fileToolbar.translating', { current: store.batchProgress.current, total: store.batchProgress.total })
-          : t('fileToolbar.batchTranslate', { count: store.selectedFiles.size }) }}
-      </el-button>
+      <!-- Desktop: secondary buttons inline -->
+      <template v-if="!isMobile">
+        <!-- Batch translate button -->
+        <el-button
+          v-if="store.selectedFiles.size > 0"
+          size="small"
+          type="warning"
+          :icon="MagicStick"
+          :loading="store.batchTranslating"
+          @click="doBatchTranslate"
+        >
+          {{ store.batchTranslating
+            ? t('fileToolbar.translating', { current: store.batchProgress.current, total: store.batchProgress.total })
+            : t('fileToolbar.batchTranslate', { count: store.selectedFiles.size }) }}
+        </el-button>
 
-      <!-- Translation toggle -->
-      <el-button-group v-if="store.currentTranslation">
+        <!-- Translation toggle -->
+        <el-button-group v-if="store.currentTranslation">
+          <el-button
+            size="small"
+            :type="!store.showTranslation ? 'primary' : 'default'"
+            @click="store.showTranslation = false"
+          >{{ t('fileToolbar.originalText') }}</el-button>
+          <el-button
+            size="small"
+            :type="store.showTranslation ? 'primary' : 'default'"
+            @click="store.showTranslation = true"
+          >{{ t('fileToolbar.translation') }}</el-button>
+        </el-button-group>
+
+        <!-- Translate button -->
         <el-button
           size="small"
-          :type="!store.showTranslation ? 'primary' : 'default'"
-          @click="store.showTranslation = false"
-        >{{ t('fileToolbar.originalText') }}</el-button>
+          :icon="MagicStick"
+          :loading="store.translating"
+          @click="store.translate()"
+        >
+          {{ store.translating ? t('fileToolbar.translatingAction') : t('fileToolbar.translateAction') }}
+        </el-button>
+
+        <!-- Version history button -->
         <el-button
+          v-if="store.isVersionManaged"
           size="small"
-          :type="store.showTranslation ? 'primary' : 'default'"
-          @click="store.showTranslation = true"
-        >{{ t('fileToolbar.translation') }}</el-button>
-      </el-button-group>
+          :icon="Clock"
+          @click="store.openVersionDrawer()"
+        >{{ t('fileToolbar.versionHistory') }}</el-button>
 
-      <!-- Translate button -->
-      <el-button
-        size="small"
-        :icon="MagicStick"
-        :loading="store.translating"
-        @click="store.translate()"
-      >
-        {{ store.translating ? t('fileToolbar.translatingAction') : t('fileToolbar.translateAction') }}
-      </el-button>
+        <!-- Variables button -->
+        <el-button
+          v-if="store.currentAgent"
+          size="small"
+          :icon="Setting"
+          @click="store.openVariablesDrawer()"
+        >{{ t('fileToolbar.variables') }}</el-button>
+      </template>
 
-      <!-- Version history button -->
-      <el-button
-        v-if="store.isVersionManaged"
-        size="small"
-        :icon="Clock"
-        :type="store.versionDrawerOpen ? 'primary' : 'default'"
-        @click="store.versionDrawerOpen ? store.closeVersionDrawer() : store.openVersionDrawer()"
-      >{{ t('fileToolbar.versionHistory') }}</el-button>
-
-      <!-- Variables button -->
-      <el-button
-        v-if="store.currentAgent"
-        size="small"
-        :icon="Setting"
-        @click="store.openVariablesDrawer()"
-      >{{ t('fileToolbar.variables') }}</el-button>
-
-      <!-- Edit / View toggle -->
+      <!-- Edit / View toggle (always visible on both desktop and mobile) -->
       <el-button
         v-if="!store.isEditing"
         size="small"
@@ -100,22 +102,67 @@
         @click="store.stopEditing()"
       >{{ t('fileToolbar.backToView') }}</el-button>
 
-      <!-- Copy button -->
-      <el-button
-        size="small"
-        :icon="DocumentCopy"
-        @click="copyContent"
-      >{{ t('fileToolbar.copy') }}</el-button>
+      <!-- Desktop: copy + save inline -->
+      <template v-if="!isMobile">
+        <!-- Copy button -->
+        <el-button
+          size="small"
+          :icon="DocumentCopy"
+          @click="copyContent"
+        >{{ t('fileToolbar.copy') }}</el-button>
 
-      <!-- Save button -->
-      <el-button
-        v-if="store.isEditing"
-        size="small"
-        type="danger"
-        :icon="Upload"
-        :loading="store.saving"
-        @click="showSaveDialog = true"
-      >{{ t('fileToolbar.saveToFile') }}</el-button>
+        <!-- Save button -->
+        <el-button
+          v-if="store.isEditing"
+          size="small"
+          type="danger"
+          :icon="Upload"
+          :loading="store.saving"
+          @click="showSaveDialog = true"
+        >{{ t('fileToolbar.saveToFile') }}</el-button>
+      </template>
+
+      <!-- Mobile: save always visible, overflow menu for secondary actions -->
+      <template v-if="isMobile">
+        <!-- Save button -->
+        <el-button
+          v-if="store.isEditing"
+          size="small"
+          type="danger"
+          :icon="Upload"
+          :loading="store.saving"
+          @click="showSaveDialog = true"
+        >{{ t('fileToolbar.saveToFile') }}</el-button>
+
+        <el-dropdown trigger="click">
+          <el-button size="small" :icon="MoreFilled" />
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item v-if="store.currentTranslation && store.showTranslation" @click="store.showTranslation = false">
+                {{ t('fileToolbar.originalText') }}
+              </el-dropdown-item>
+              <el-dropdown-item v-if="store.currentTranslation && !store.showTranslation" @click="store.showTranslation = true">
+                {{ t('fileToolbar.translation') }}
+              </el-dropdown-item>
+              <el-dropdown-item @click="store.translate()">
+                {{ store.translating ? t('fileToolbar.translatingAction') : t('fileToolbar.translateAction') }}
+              </el-dropdown-item>
+              <el-dropdown-item v-if="store.selectedFiles.size > 0" @click="doBatchTranslate">
+                {{ t('fileToolbar.batchTranslate', { count: store.selectedFiles.size }) }}
+              </el-dropdown-item>
+              <el-dropdown-item v-if="store.isVersionManaged" @click="store.openVersionDrawer()">
+                {{ t('fileToolbar.versionHistory') }}
+              </el-dropdown-item>
+              <el-dropdown-item v-if="store.currentAgent" @click="store.openVariablesDrawer()">
+                {{ t('fileToolbar.variables') }}
+              </el-dropdown-item>
+              <el-dropdown-item @click="copyContent">
+                {{ t('fileToolbar.copy') }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </template>
     </div>
 
     <!-- Save confirmation dialog -->
@@ -146,14 +193,16 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
-import { Document, EditPen, View, DocumentCopy, MagicStick, Upload, Clock, Refresh, Setting } from '@element-plus/icons-vue'
+import { Document, EditPen, View, DocumentCopy, MagicStick, Upload, Clock, Refresh, Setting, MoreFilled } from '@element-plus/icons-vue'
 import { useAgentStore } from '../stores/agent'
 import { useTemplateStore } from '../stores/template'
+import { useResponsive } from '../composables/useResponsive'
 import { restoreToBlueprint } from '../api'
 
 const { t } = useI18n()
 const store = useAgentStore()
 const templateStore = useTemplateStore()
+const { isMobile } = useResponsive()
 const showSaveDialog = ref(false)
 const commitMsg = ref('')
 

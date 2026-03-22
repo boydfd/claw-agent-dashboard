@@ -226,4 +226,15 @@ function getAgentDotClass(agentName) {
 .dot-unknown {
   background: #dcdfe6;
 }
+
+/* Mobile touch-friendly */
+@media (max-width: 768px) {
+  .agent-item {
+    min-height: 44px;
+    padding: 12px 16px;
+  }
+  .agent-dot-item {
+    min-height: 44px;
+  }
+}
 </style>

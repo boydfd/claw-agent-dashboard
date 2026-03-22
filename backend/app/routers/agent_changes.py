@@ -133,7 +133,7 @@ async def _accept_change(agent_name: str, change_id: int) -> dict:
 
     # Render and write to disk
     result = render_template(recovered_template, variables)
-    file_service.write_file(agent_name, file_path, result.content)
+    await file_service.write_file_async(agent_name, file_path, result.content)
 
     # Create version record (store rendered content that was written to disk)
     content_hash = version_db.compute_hash(result.content)
@@ -171,7 +171,7 @@ async def _reject_change(agent_name: str, change_id: int) -> dict:
     if template:
         # Render template and overwrite disk
         result = render_template(template["content"], variables)
-        file_service.write_file(agent_name, file_path, result.content)
+        await file_service.write_file_async(agent_name, file_path, result.content)
         rendered_hash = version_db.compute_hash(result.content)
         await version_db.upsert_tracked_file(agent_id, file_path, rendered_hash)
     else:

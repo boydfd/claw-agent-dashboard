@@ -24,7 +24,7 @@
       <!-- Messages -->
       <div class="messages-list" ref="messagesListRef">
         <div
-          v-for="(msg, idx) in messages"
+          v-for="(msg, idx) in filteredMessages"
           :key="idx"
           class="message-item"
           :class="'message-' + msg.role"
@@ -35,8 +35,8 @@
             <el-tag :type="roleTagType(msg.role)" size="small" class="role-tag">
               {{ msg.role }}
             </el-tag>
-            <span v-if="msg.model" class="message-model mono">{{ msg.provider ? `${msg.provider}/${msg.model}` : msg.model }}</span>
-            <span v-if="msg.usage" class="message-usage mono">
+            <span v-if="msg.model && viewMode === 'detailed'" class="message-model mono">{{ msg.provider ? `${msg.provider}/${msg.model}` : msg.model }}</span>
+            <span v-if="msg.usage && viewMode === 'detailed'" class="message-usage mono">
               {{ formatTokenCount(msg.usage.input || 0) }}in / {{ formatTokenCount(msg.usage.output || 0) }}out
             </span>
           </div>
@@ -216,15 +216,74 @@
     <div v-else class="messages-empty">
       No messages found in this session
     </div>
+
+    <!-- Compose bar -->
+    <div class="compose-bar" v-if="sessionKey">
+      <div class="compose-toolbar">
+        <div class="toggle-group">
+          <el-button-group size="small">
+            <el-button :type="viewMode === 'chat' ? 'primary' : ''" @click="viewMode = 'chat'">
+              {{ t('sessionCompose.viewChat') }}
+            </el-button>
+            <el-button :type="viewMode === 'detailed' ? 'primary' : ''" @click="viewMode = 'detailed'">
+              {{ t('sessionCompose.viewDetail') }}
+            </el-button>
+          </el-button-group>
+        </div>
+        <div class="toggle-group">
+          <el-button-group size="small">
+            <el-button :type="sendMode === 'envelope' ? 'primary' : ''" @click="sendMode = 'envelope'">
+              {{ t('sessionCompose.modeEnvelope') }}
+            </el-button>
+            <el-button :type="sendMode === 'raw' ? 'primary' : ''" @click="sendMode = 'raw'">
+              {{ t('sessionCompose.modeRaw') }}
+            </el-button>
+          </el-button-group>
+        </div>
+        <span v-if="sendMode === 'envelope' && fromName" class="from-name-tag" @click="showFromDialog = true; fromInput = fromName">
+          {{ fromName }}
+        </span>
+      </div>
+      <div class="compose-input">
+        <el-input
+          v-model="composeText"
+          type="textarea"
+          :rows="2"
+          :placeholder="t('sessionCompose.placeholder')"
+          @keydown="handleKeydown"
+          :disabled="sending"
+        />
+        <el-button
+          type="primary"
+          :disabled="!canSend"
+          :loading="sending"
+          @click="handleSend"
+        >
+          {{ sending ? t('sessionCompose.sending') : t('sessionCompose.send') }}
+        </el-button>
+      </div>
+    </div>
+
+    <!-- From name dialog -->
+    <el-dialog v-model="showFromDialog" :title="t('sessionCompose.fromLabel')" width="360px" append-to-body>
+      <el-input v-model="fromInput" :placeholder="t('sessionCompose.fromPlaceholder')" @keydown.enter="saveFromName" />
+      <template #footer>
+        <el-button @click="showFromDialog = false">Cancel</el-button>
+        <el-button type="primary" @click="saveFromName" :disabled="!fromInput.trim()">OK</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { reactive, ref, watch, nextTick } from 'vue'
+import { reactive, ref, watch, nextTick, computed } from 'vue'
 import { Loading, View, Setting, ArrowRight, ArrowDown, CircleCloseFilled, CircleCheckFilled } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
+import { useI18n } from 'vue-i18n'
+import { ElMessageBox, ElMessage } from 'element-plus'
+import { useAgentStore } from '../stores/agent'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -233,6 +292,9 @@ const props = defineProps({
   pageSize: { type: Number, default: 50 },
   loading: { type: Boolean, default: false },
   targetMessageIndex: { type: Number, default: null },
+  sessionKey: { type: String, default: '' },
+  agentName: { type: String, default: '' },
+  sessionStatus: { type: String, default: '' },
 })
 
 const emit = defineEmits(['page-change', 'highlight-done'])
@@ -436,6 +498,108 @@ function onPageChange(page) {
       messagesListRef.value.scrollTop = 0
     }
   })
+}
+
+const store = useAgentStore()
+const { t } = useI18n()
+
+// Compose state
+const viewMode = ref(localStorage.getItem('session-compose:viewMode') || 'detailed')
+const sendMode = ref(localStorage.getItem('session-compose:sendMode') || 'envelope')
+const composeText = ref('')
+const sending = ref(false)
+const fromName = ref(localStorage.getItem('session-compose:from') || '')
+const showFromDialog = ref(false)
+const fromInput = ref('')
+
+// Persist mode changes
+watch(viewMode, (v) => localStorage.setItem('session-compose:viewMode', v))
+watch(sendMode, (v) => localStorage.setItem('session-compose:sendMode', v))
+
+function stripDirectiveTags(text) {
+  if (!text || (!text.includes('[[') && !text.includes('MEDIA:'))) return text
+  return text
+    .replace(/\[\[\s*(?:reply_to_current|reply_to\s*:\s*[^\]\n]+)\s*\]\]/gi, '')
+    .replace(/\[\[\s*audio_as_voice\s*\]\]/gi, '')
+    .replace(/^MEDIA:\S+.*$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+const filteredMessages = computed(() => {
+  if (viewMode.value === 'detailed') return props.messages
+  return props.messages
+    .filter(msg => {
+      if (msg.role === 'user') return true
+      if (msg.role === 'assistant') {
+        return msg.content?.some(b => b.type === 'text' && b.text?.trim())
+      }
+      return false
+    })
+    .map(msg => {
+      if (msg.role !== 'assistant') return msg
+      const filtered = msg.content
+        .filter(b => b.type === 'text' && b.text?.trim())
+        .map(b => ({ ...b, text: stripDirectiveTags(b.text) }))
+        .filter(b => b.text?.trim())
+      return { ...msg, content: filtered }
+    })
+    .filter(msg => msg.role !== 'assistant' || msg.content?.length > 0)
+})
+
+const canSend = computed(() => composeText.value.trim().length > 0 && !sending.value)
+const isAgentBusy = computed(() => props.sessionStatus === 'working')
+
+async function handleSend() {
+  if (!canSend.value) return
+  if (sendMode.value === 'envelope' && !fromName.value) {
+    showFromDialog.value = true
+    fromInput.value = ''
+    return
+  }
+  if (isAgentBusy.value) {
+    try {
+      await ElMessageBox.confirm(t('sessionCompose.busyConfirm'), { type: 'warning' })
+    } catch { return }
+  }
+  sending.value = true
+  try {
+    const envelopeContext = sendMode.value === 'envelope' ? {
+      channel: 'agent-preview',
+      sender: fromName.value,
+      chat_type: 'group',
+    } : undefined
+    const result = await store.sendMessage(
+      props.agentName, props.sessionKey, composeText.value,
+      sendMode.value, envelopeContext,
+    )
+    if (result.ok) {
+      composeText.value = ''
+      ElMessage.success(t('sessionCompose.sendSuccess'))
+    } else {
+      ElMessage.error(result.error || t('sessionCompose.sendError'))
+    }
+  } catch (e) {
+    ElMessage.error(t('sessionCompose.sendError'))
+  } finally {
+    sending.value = false
+  }
+}
+
+function saveFromName() {
+  fromName.value = fromInput.value.trim()
+  localStorage.setItem('session-compose:from', fromName.value)
+  showFromDialog.value = false
+  if (fromName.value) handleSend()
+}
+
+function handleKeydown(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault()
+    handleSend()
+  } else if (e.key === 'Escape') {
+    composeText.value = ''
+  }
 }
 </script>
 
@@ -796,6 +960,59 @@ function onPageChange(page) {
 
 .json-content code {
   font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+}
+
+/* Compose bar */
+.compose-bar {
+  border-top: 1px solid var(--el-border-color);
+  padding: 8px 12px;
+  background: var(--el-bg-color);
+  flex-shrink: 0;
+}
+
+.compose-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.compose-input {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.compose-input .el-textarea {
+  flex: 1;
+}
+
+.compose-input .el-button {
+  flex-shrink: 0;
+  height: 54px;
+}
+
+.from-name-tag {
+  font-size: 12px;
+  color: var(--el-color-primary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--el-color-primary-light-9);
+}
+
+.from-name-tag:hover {
+  background: var(--el-color-primary-light-7);
+}
+
+@media (max-width: 768px) {
+  .compose-toolbar {
+    gap: 4px;
+  }
+  .compose-input .el-button {
+    height: 40px;
+  }
 }
 </style>
 

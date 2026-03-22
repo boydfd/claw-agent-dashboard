@@ -8,6 +8,31 @@ from ..config import AGENTS_DIR, SESSION_DATA_DIR, resolve_agent_dir
 from ..services import version_db, version_service
 from ..services.file_service import CORE_FILES
 from ..services.scanner import list_agents
+from ..services.version_db import MAX_SCAN_FILE_SIZE
+from ..services.config import read_config
+
+BINARY_EXTENSIONS = {
+    '.tar', '.gz', '.tgz', '.zip', '.bz2', '.xz', '.7z',
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp',
+    '.woff', '.woff2', '.ttf', '.eot',
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx',
+    '.exe', '.dll', '.so', '.dylib', '.o', '.a',
+    '.pyc', '.pyo', '.class', '.jar',
+    '.sqlite', '.db', '.sqlite3',
+    '.mp3', '.mp4', '.wav', '.avi', '.mov',
+}
+
+
+def _should_skip_file(path: Path) -> bool:
+    """Return True if the file should be skipped (binary, too large, or missing)."""
+    if path.suffix.lower() in BINARY_EXTENSIONS:
+        return True
+    try:
+        if path.stat().st_size > MAX_SCAN_FILE_SIZE:
+            return True
+    except OSError:
+        return True
+    return False
 
 
 class ChangeDetector(ABC):
@@ -27,6 +52,13 @@ class HashScanDetector(ChangeDetector):
         self._interval = interval
         self._task: asyncio.Task | None = None
         self._running = False
+
+    def _get_excluded_dirs(self) -> set[str]:
+        config = read_config()
+        excluded = config.get("change_detector", {}).get("excluded_dirs", [])
+        if not isinstance(excluded, list):
+            return set()
+        return {str(item) for item in excluded if str(item).strip()}
 
     async def start(self):
         self._running = True
@@ -63,6 +95,7 @@ class HashScanDetector(ChangeDetector):
             agent_id = await version_db.get_or_create_agent(agent_name)
             tracked = await version_db.get_all_tracked_files(agent_id)
             tracked_map = {t["file_path"]: t["current_hash"] for t in tracked}
+            excluded_dirs = self._get_excluded_dirs()
 
             # Collect managed files: core files + all non-hidden top-level
             # files + known managed subdirectories (skills/, docker/).
@@ -81,12 +114,14 @@ class HashScanDetector(ChangeDetector):
                     managed_files.append((fpath.name, fpath))
                 elif fpath.is_dir() and fpath.name in MANAGED_SUBDIRS:
                     for root, dirs, files in os.walk(fpath):
-                        dirs[:] = [d for d in dirs if not d.startswith('.')]
+                        dirs[:] = [d for d in dirs if not d.startswith('.') and d not in excluded_dirs]
                         for fname in files:
-                            if fname.startswith('.'):
+                            if fname.startswith('.'): 
                                 continue
                             full_path = Path(root) / fname
                             rel_path = str(full_path.relative_to(agent_dir))
+                            if any(part in excluded_dirs for part in Path(rel_path).parts):
+                                continue
                             managed_files.append((rel_path, full_path))
 
             # Look up derivation info once per agent
@@ -100,6 +135,8 @@ class HashScanDetector(ChangeDetector):
             seen_paths = set()
             for rel_path, full_path in managed_files:
                 seen_paths.add(rel_path)
+                if _should_skip_file(full_path):
+                    continue
                 try:
                     content = full_path.read_text(encoding="utf-8", errors="replace")
                 except Exception:
@@ -201,6 +238,8 @@ class HashScanDetector(ChangeDetector):
 
             for rel_path, full_path in disk_files:
                 seen_paths.add(rel_path)
+                if _should_skip_file(full_path):
+                    continue
                 try:
                     content = full_path.read_text(encoding="utf-8", errors="replace")
                 except Exception:
@@ -239,20 +278,25 @@ class HashScanDetector(ChangeDetector):
         (skills/, docker/, etc.), skipping hidden directories (dot-prefixed).
         """
         files = []
+        excluded_dirs = self._get_excluded_dirs()
         for f in bp_dir.iterdir():
             if f.name.startswith('.'):
                 continue
             if f.is_file():
                 files.append((f.name, f))
             elif f.is_dir():
+                if f.name in excluded_dirs:
+                    continue
                 for root, dirs, filenames in os.walk(f):
                     # Skip hidden subdirectories
-                    dirs[:] = [d for d in dirs if not d.startswith('.')]
+                    dirs[:] = [d for d in dirs if not d.startswith('.') and d not in excluded_dirs]
                     for fname in filenames:
                         if fname.startswith('.'):
                             continue
                         full = Path(root) / fname
                         rel = str(full.relative_to(bp_dir))
+                        if any(part in excluded_dirs for part in Path(rel).parts):
+                            continue
                         files.append((rel, full))
         return files
 

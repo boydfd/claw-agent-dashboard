@@ -77,4 +77,14 @@ const tabs = [
   color: #666;
   font-size: 16px;
 }
+
+@media (max-width: 768px) {
+  .management-tab {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .management-content {
+    padding: 12px;
+  }
+}
 </style>

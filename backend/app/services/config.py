@@ -18,6 +18,16 @@ DEFAULT_CONFIG = {
     "features": {
         "auto_summary": True,
     },
+    "change_detector": {
+        "excluded_dirs": [
+            ".git",
+            "__pycache__",
+            "node_modules",
+            ".cache",
+            ".venv",
+            "venv"
+        ]
+    },
 }
 
 

@@ -163,13 +163,13 @@ async def add_blueprint_file(blueprint_id: int, body: BlueprintFileCreate):
 # ---------------------------------------------------------------------------
 
 @router.get("/{blueprint_id}/files/{file_path:path}/versions")
-async def get_blueprint_file_versions(blueprint_id: int, file_path: str):
+async def get_blueprint_file_versions(blueprint_id: int, file_path: str, limit: int = 20, offset: int = 0):
     """Get version history for a blueprint file."""
     bp = await blueprint_service.get_blueprint(blueprint_id)
     if not bp:
         raise HTTPException(404, "Blueprint not found")
-    versions, total = await version_db.get_versions(bp["agent_id"], file_path)
-    return versions
+    versions, total = await version_db.get_versions(bp["agent_id"], file_path, limit=limit, offset=offset)
+    return {"versions": versions, "total": total}
 
 
 @router.get("/{blueprint_id}/files/{file_path:path}/versions/{version_num}")
@@ -185,42 +185,6 @@ async def get_blueprint_file_version(blueprint_id: int, file_path: str, version_
     # Fetch full version record including content
     version = await version_db.get_version(version_meta["id"])
     return version
-
-
-# NOTE: This diff endpoint MUST be defined BEFORE the greedy /versions/{version_num} route
-@router.get("/{blueprint_id}/files/{file_path:path}/diff")
-async def get_blueprint_file_diff(
-    blueprint_id: int,
-    file_path: str,
-    from_version_num: int,
-    to_version_num: int,
-):
-    """Get unified diff between two blueprint file versions."""
-    import difflib
-    bp = await blueprint_service.get_blueprint(blueprint_id)
-    if not bp:
-        raise HTTPException(404, "Blueprint not found")
-
-    versions, _ = await version_db.get_versions(bp["agent_id"], file_path)
-    from_ver = next((v for v in versions if v["version_num"] == from_version_num), None)
-    to_ver = next((v for v in versions if v["version_num"] == to_version_num), None)
-
-    if not from_ver or not to_ver:
-        raise HTTPException(404, "Version not found")
-
-    from_ver_full = await version_db.get_version(from_ver["id"])
-    to_ver_full = await version_db.get_version(to_ver["id"])
-
-    from_lines = from_ver_full["content"].splitlines(keepends=True)
-    to_lines = to_ver_full["content"].splitlines(keepends=True)
-
-    diff = difflib.unified_diff(
-        from_lines,
-        to_lines,
-        fromfile=f"v{from_version_num}",
-        tofile=f"v{to_version_num}",
-    )
-    return {"diff": "".join(diff)}
 
 
 @router.post("/{blueprint_id}/files/{file_path:path}/restore/{version_num}")

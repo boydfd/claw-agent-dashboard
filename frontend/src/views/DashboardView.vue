@@ -85,4 +85,16 @@ onUnmounted(() => {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
+
+@media (max-width: 768px) {
+  .dashboard-view {
+    padding: 12px 16px;
+  }
+  .card-grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-header h1 {
+    font-size: 17px;
+  }
+}
 </style>

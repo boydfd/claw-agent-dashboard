@@ -7,6 +7,8 @@ import aiosqlite
 
 from ..config import DATA_DIR
 
+MAX_SCAN_FILE_SIZE = 5 * 1024 * 1024  # 5MB — skip files larger than this
+
 DB_PATH = Path(DATA_DIR) / "versions.db"
 
 _db: aiosqlite.Connection | None = None
@@ -23,6 +25,7 @@ async def get_db() -> aiosqlite.Connection:
                 _db.row_factory = aiosqlite.Row
                 await _db.execute("PRAGMA journal_mode=WAL")
                 await _db.execute("PRAGMA foreign_keys=ON")
+                await _db.execute("PRAGMA busy_timeout=5000")
     return _db
 
 
@@ -294,7 +297,10 @@ async def create_version(
     source: str,
     likely_openclaw: bool = False,
     commit_msg: str | None = None,
-) -> dict:
+) -> dict | None:
+    if len(content) > MAX_SCAN_FILE_SIZE:
+        print(f"[version_db] Skipping oversized content for {file_path} ({len(content)} bytes)")
+        return None
     db = await get_db()
     version_num = await get_next_version_num(agent_id, file_path)
     cursor = await db.execute(

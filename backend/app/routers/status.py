@@ -1,7 +1,8 @@
 """Status API routes — system metrics, gateway health, agent status, events."""
-from typing import Optional
+from typing import Literal, Optional
+import httpx
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from ..services import status as status_service
 
@@ -86,3 +87,46 @@ class SwitchModelRequest(BaseModel):
 async def switch_session_model(req: SwitchModelRequest):
     """Switch model for an existing session via Gateway WebSocket RPC."""
     return await status_service.switch_session_model(req.agent, req.model, req.session_key)
+
+
+class EnvelopeContext(BaseModel):
+    channel: str = "agent-preview"
+    sender: str  # required — frontend guards via from-name dialog
+    chat_type: str = "group"
+
+
+class SendMessageRequest(BaseModel):
+    agent: str
+    session_key: str
+    message: str = Field(..., min_length=1, max_length=10000)
+    mode: Literal["raw", "envelope"]
+    envelope_context: EnvelopeContext | None = None
+    attachments: list = Field(default_factory=list)  # reserved for future multimodal
+
+    @field_validator("message", mode="before")
+    @classmethod
+    def message_not_blank(cls, v):
+        if isinstance(v, str) and not v.strip():
+            raise ValueError("message must not be blank")
+        return v
+
+
+@router.post("/status/session/send")
+async def send_session_message(req: SendMessageRequest):
+    try:
+        env = req.envelope_context or EnvelopeContext(sender="")
+        result = await status_service.send_session_message(
+            agent=req.agent,
+            session_key=req.session_key,
+            message=req.message,
+            mode=req.mode,
+            envelope_channel=env.channel,
+            envelope_sender=env.sender,
+            envelope_chat_type=env.chat_type,
+        )
+        return result
+    except httpx.HTTPStatusError as e:
+        return {"ok": False, "error": f"Gateway error: {e.response.status_code}"}
+    except Exception as e:
+        # Avoid leaking internal URLs or headers in error messages
+        return {"ok": False, "error": "Failed to send message to gateway"}

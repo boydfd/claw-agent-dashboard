@@ -41,4 +41,12 @@ html, body, #app {
   height: 100%;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
+
+/* Mobile responsive: dialog width */
+@media (max-width: 768px) {
+  .el-dialog {
+    width: 90vw !important;
+    max-width: 560px;
+  }
+}
 </style>

@@ -90,6 +90,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { useBlueprintStore } from '../stores/blueprint'
+import { computeDiff } from '../utils/diff'
 
 const props = defineProps({
   blueprintId: {
@@ -120,66 +121,6 @@ onMounted(async () => {
     selectedChange.value = changes.value[0]
   }
 })
-
-// --- Diff computation ---
-
-function computeLCS(a, b) {
-  const m = a.length, n = b.length
-  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1])
-    }
-  }
-  const result = []
-  let i = m, j = n
-  while (i > 0 && j > 0) {
-    if (a[i - 1] === b[j - 1]) {
-      result.unshift(a[i - 1])
-      i--
-      j--
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
-      i--
-    } else {
-      j--
-    }
-  }
-  return result
-}
-
-function computeDiff(oldText, newText) {
-  if (!oldText && !newText) return []
-  const oldLines = (oldText || '').split('\n')
-  const newLines = (newText || '').split('\n')
-
-  const lcs = computeLCS(oldLines, newLines)
-  const result = []
-  let oi = 0, ni = 0, li = 0
-  let oldNum = 1, newNum = 1
-
-  while (oi < oldLines.length || ni < newLines.length) {
-    if (li < lcs.length && oi < oldLines.length && oldLines[oi] === lcs[li] && ni < newLines.length && newLines[ni] === lcs[li]) {
-      result.push({ type: 'context', prefix: ' ', text: oldLines[oi], oldNum: oldNum++, newNum: newNum++ })
-      oi++; ni++; li++
-    } else if (li < lcs.length && ni < newLines.length && newLines[ni] === lcs[li]) {
-      result.push({ type: 'del', prefix: '-', text: oldLines[oi], oldNum: oldNum++, newNum: null })
-      oi++
-    } else if (li < lcs.length && oi < oldLines.length && oldLines[oi] === lcs[li]) {
-      result.push({ type: 'add', prefix: '+', text: newLines[ni], oldNum: null, newNum: newNum++ })
-      ni++
-    } else {
-      if (oi < oldLines.length) {
-        result.push({ type: 'del', prefix: '-', text: oldLines[oi], oldNum: oldNum++, newNum: null })
-        oi++
-      }
-      if (ni < newLines.length) {
-        result.push({ type: 'add', prefix: '+', text: newLines[ni], oldNum: null, newNum: newNum++ })
-        ni++
-      }
-    }
-  }
-  return result
-}
 
 const diffLines = computed(() => {
   if (!selectedChange.value) return []

@@ -24,7 +24,6 @@ import {
   fetchFileVersions as apiFetchVersions,
   fetchVersionDetail as apiFetchVersionDetail,
   restoreVersion as apiRestoreVersion,
-  fetchVersionDiff as apiFetchVersionDiff,
   fetchAgentVariables as apiFetchAgentVariables,
   fetchAgentPendingChanges,
   acceptAgentPendingChange,
@@ -81,6 +80,7 @@ export const useAgentStore = defineStore('agent', () => {
 
   // Session panel (split pane selection + pagination)
   const selectedSessionId = ref(null)
+  const selectedSessionKey = ref(null)
   const sessionPage = ref(1)             // current page number (1-based)
   const sessionPageSize = ref(50)
 
@@ -665,8 +665,9 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   // Session panel actions (split pane + pagination)
-  function selectSession(sessionId) {
+  function selectSession(sessionId, sessionKey = null) {
     selectedSessionId.value = sessionId
+    selectedSessionKey.value = sessionKey
     // Default to last page — we need to first load page 1 to know total, then jump
     sessionPage.value = 1
     loadSessionPage(sessionId, 1, true)
@@ -728,6 +729,18 @@ export const useAgentStore = defineStore('agent', () => {
     return await apiSwitchSessionModel(agent, model, sessionKey)
   }
 
+  async function sendMessage(agentName, sessionKey, message, mode, envelopeContext) {
+    const { sendSessionMessage: apiSend } = await import('../api')
+    const result = await apiSend(agentName, sessionKey, message, mode, envelopeContext)
+    if (result.ok) {
+      const sessionId = selectedSessionId.value
+      if (sessionId) {
+        await loadSessionPage(sessionId, null, true)
+      }
+    }
+    return result
+  }
+
   // Computed
   const displayContent = computed(() => {
     if (showTranslation.value && currentTranslation.value) {
@@ -745,7 +758,6 @@ export const useAgentStore = defineStore('agent', () => {
   const versionList = ref([])
   const versionTotal = ref(0)
   const versionLoading = ref(false)
-  const versionDiff = ref(null)
 
   const isVersionManaged = computed(() => {
     if (!currentFile.value) return false
@@ -774,6 +786,22 @@ export const useAgentStore = defineStore('agent', () => {
     }
   }
 
+  async function fetchMoreVersions(limit = 20) {
+    if (!currentAgent.value || !currentFile.value) return
+    versionLoading.value = true
+    try {
+      const data = await apiFetchVersions(
+        currentAgent.value.name, currentFile.value.path, limit, versionList.value.length
+      )
+      versionList.value.push(...data.versions)
+      versionTotal.value = data.total
+    } catch (e) {
+      console.error('Failed to fetch more versions:', e)
+    } finally {
+      versionLoading.value = false
+    }
+  }
+
   async function fetchVersionDetail(versionId) {
     return await apiFetchVersionDetail(versionId)
   }
@@ -790,24 +818,13 @@ export const useAgentStore = defineStore('agent', () => {
     return result
   }
 
-  async function fetchDiff(fromId, toId) {
-    if (!currentAgent.value || !currentFile.value) return
-    const data = await apiFetchVersionDiff(
-      currentAgent.value.name, currentFile.value.path, fromId, toId
-    )
-    versionDiff.value = data.diff
-    return data.diff
-  }
-
-  function openVersionDrawer() {
+  async function openVersionDrawer() {
     versionDrawerOpen.value = true
-    versionDiff.value = null
-    fetchVersions()
+    await fetchVersions()
   }
 
   function closeVersionDrawer() {
     versionDrawerOpen.value = false
-    versionDiff.value = null
   }
 
   // Variables drawer
@@ -966,6 +983,7 @@ export const useAgentStore = defineStore('agent', () => {
     loadMoreSessionMessages,
     // Session panel (split pane + pagination)
     selectedSessionId,
+    selectedSessionKey,
     sessionPage,
     sessionPageSize,
     selectSession,
@@ -976,17 +994,17 @@ export const useAgentStore = defineStore('agent', () => {
     loadModels,
     createSession,
     switchModel,
+    sendMessage,
     // Version history
     versionDrawerOpen,
     versionList,
     versionTotal,
     versionLoading,
-    versionDiff,
     isVersionManaged,
     fetchVersions,
     fetchVersionDetail,
+    fetchMoreVersions,
     restoreVersion,
-    fetchDiff,
     openVersionDrawer,
     closeVersionDrawer,
     // Derivation status

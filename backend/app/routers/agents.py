@@ -11,7 +11,7 @@ router = APIRouter(tags=["agents"])
 @router.get("/agents")
 async def list_agents():
     """List all discovered agents."""
-    agents = scanner.list_agents()
+    agents = await scanner.list_agents_async()
     # Attach database ID and blueprint name for each agent
     for agent in agents:
         agent["id"] = await version_db.get_or_create_agent(agent["name"])
@@ -28,7 +28,7 @@ async def list_agents():
 @router.get("/agents/{agent_name}/files")
 async def get_agent_files(agent_name: str):
     """List core files for an agent."""
-    files = file_service.list_agent_files(agent_name)
+    files = await file_service.list_agent_files_async(agent_name)
     # Annotate with translation status
     for f in files:
         f["has_translation"] = translation_exists(agent_name, f["path"])
@@ -38,7 +38,7 @@ async def get_agent_files(agent_name: str):
 @router.get("/agents/{agent_name}/memory")
 async def get_memory_files(agent_name: str):
     """List memory files for an agent."""
-    files = file_service.list_memory_files(agent_name)
+    files = await file_service.list_memory_files_async(agent_name)
     for f in files:
         f["has_translation"] = translation_exists(agent_name, f["path"])
     return files
@@ -47,26 +47,26 @@ async def get_memory_files(agent_name: str):
 @router.get("/agents/{agent_name}/other-files")
 async def get_other_files(agent_name: str):
     """List other files/directories in agent root."""
-    return file_service.list_other_files(agent_name)
+    return await file_service.list_other_files_async(agent_name)
 
 
 @router.get("/agents/{agent_name}/skills")
 async def get_agent_skills(agent_name: str):
     """List skills for an agent."""
-    return file_service.list_agent_skills(agent_name)
+    return await file_service.list_agent_skills_async(agent_name)
 
 
 @router.get("/agents/{agent_name}/skill-files/{skill_name}")
 async def get_skill_files(agent_name: str, skill_name: str):
     """List all files in a skill directory."""
-    files = file_service.list_skill_files(agent_name, skill_name)
+    files = await file_service.list_skill_files_async(agent_name, skill_name)
     return files
 
 
 @router.get("/agents/{agent_name}/file")
 async def get_file_content(agent_name: str, path: str = Query(..., description="Relative file path")):
     """Read a specific file's content."""
-    result = file_service.read_file(agent_name, path)
+    result = await file_service.read_file_async(agent_name, path)
     if result is None:
         raise HTTPException(status_code=404, detail="File not found")
     result["has_translation"] = translation_exists(agent_name, path)
