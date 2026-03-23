@@ -64,8 +64,8 @@
 mkdir claw-agent-dashboard && cd claw-agent-dashboard
 
 # 2. 下载配置文件
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/docker-compose.yml
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/.env.example
+curl -LO https://raw.githubusercontent.com/boydfd/claw-agent-dashboard/main/docker-compose.yml
+curl -LO https://raw.githubusercontent.com/boydfd/claw-agent-dashboard/main/.env.example
 cp .env.example .env
 
 # 3. 编辑 .env — 至少设置 OPENCLAW_HOME 和 GATEWAY_TOKEN
@@ -78,7 +78,7 @@ docker compose up -d
 ### 方式 B — 从源码构建
 
 ```bash
-git clone https://github.com/iota3/claw-agent-dashboard.git
+git clone https://github.com/boydfd/claw-agent-dashboard.git
 cd claw-agent-dashboard
 cp .env.example .env
 # 编辑 .env

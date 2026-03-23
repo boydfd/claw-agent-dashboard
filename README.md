@@ -64,8 +64,8 @@ It's designed for OpenClaw operators who want visibility and control without SSH
 mkdir claw-agent-dashboard && cd claw-agent-dashboard
 
 # 2. Download config files
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/docker-compose.yml
-curl -LO https://raw.githubusercontent.com/iota3/claw-agent-dashboard/main/.env.example
+curl -LO https://raw.githubusercontent.com/boydfd/claw-agent-dashboard/main/docker-compose.yml
+curl -LO https://raw.githubusercontent.com/boydfd/claw-agent-dashboard/main/.env.example
 cp .env.example .env
 
 # 3. Edit .env — at minimum set OPENCLAW_HOME and GATEWAY_TOKEN
@@ -78,7 +78,7 @@ docker compose up -d
 ### Option B — Build from source
 
 ```bash
-git clone https://github.com/iota3/claw-agent-dashboard.git
+git clone https://github.com/boydfd/claw-agent-dashboard.git
 cd claw-agent-dashboard
 cp .env.example .env
 # Edit .env
