@@ -401,20 +401,21 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBlueprintStore } from '../stores/blueprint'
 import { useAgentStore } from '../stores/agent'
 import { useVariableStore } from '../stores/variable'
 import { fetchVariablesByScope, fetchBlueprintFileVersion } from '../api'
-import CodeEditor from './CodeEditor.vue'
 import DeriveAgentDialog from './DeriveAgentDialog.vue'
 import BlueprintDiffView from './BlueprintDiffView.vue'
 import VersionHistoryPanel from './VersionHistoryPanel.vue'
 import VersionDiffView from './VersionDiffView.vue'
 import VariableDialog from './VariableDialog.vue'
 import { Search, Loading } from '@element-plus/icons-vue'
+
+const CodeEditor = defineAsyncComponent(() => import('./CodeEditor.vue'))
 
 const { t } = useI18n()
 const store = useBlueprintStore()

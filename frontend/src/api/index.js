@@ -79,6 +79,9 @@ export function sendSessionMessage(agent, sessionKey, message, mode, envelopeCon
   }).then(r => r.data)
 }
 
+// Security (read-only audit)
+export const fetchSecurityAudit = () => api.get('/security/audit').then(r => r.data)
+
 // Settings
 export const fetchSettings = () => api.get('/settings').then(r => r.data)
 export const updateSettings = (data) => api.put('/settings', data).then(r => r.data)

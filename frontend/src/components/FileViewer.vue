@@ -112,7 +112,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, ref, watch, nextTick, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loading } from '@element-plus/icons-vue'
 import hljs from 'highlight.js'
@@ -122,10 +122,11 @@ import { useTemplateStore } from '../stores/template'
 import { fetchAgentVariables, fetchVersionDetail } from '../api'
 import FileToolbar from './FileToolbar.vue'
 import MarkdownRenderer from './MarkdownRenderer.vue'
-import CodeEditor from './CodeEditor.vue'
 import VersionHistoryPanel from './VersionHistoryPanel.vue'
 import VersionDiffView from './VersionDiffView.vue'
 import AgentVariablesDrawer from './AgentVariablesDrawer.vue'
+
+const CodeEditor = defineAsyncComponent(() => import('./CodeEditor.vue'))
 
 const { t } = useI18n()
 const store = useAgentStore()

@@ -30,6 +30,14 @@
             <el-icon><Setting /></el-icon>
             {{ t('management.title') }}
           </router-link>
+          <router-link
+            to="/security"
+            class="nav-tab"
+            :class="{ active: isSecurity }"
+          >
+            <el-icon><Lock /></el-icon>
+            {{ t('app.security') }}
+          </router-link>
         </nav>
       </div>
       <!-- Desktop right buttons -->
@@ -66,6 +74,10 @@
           <el-icon><Setting /></el-icon>
           {{ t('management.title') }}
         </router-link>
+        <router-link to="/security" class="mobile-nav-item" :class="{ active: isSecurity }">
+          <el-icon><Lock /></el-icon>
+          {{ t('app.security') }}
+        </router-link>
         <div class="mobile-nav-divider"></div>
         <div class="mobile-nav-actions">
           <el-button text class="lang-btn" @click="toggleLocale">
@@ -86,7 +98,7 @@
 import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Setting, DataLine, Monitor, Menu as MenuIcon, Close } from '@element-plus/icons-vue'
+import { Setting, DataLine, Monitor, Menu as MenuIcon, Close, Lock } from '@element-plus/icons-vue'
 import { useSettingsStore } from '../stores/settings'
 import { useResponsive } from '../composables/useResponsive'
 
@@ -98,6 +110,7 @@ const { isMobile } = useResponsive()
 const isDashboard = computed(() => route.path === '/dashboard')
 const isAgents = computed(() => route.path.startsWith('/agents'))
 const isManagement = computed(() => route.path.startsWith('/management'))
+const isSecurity = computed(() => route.path.startsWith('/security'))
 
 const mobileMenuOpen = ref(false)
 
@@ -184,7 +197,9 @@ function toggleLocale() {
 }
 .app-body {
   flex: 1;
-  overflow: hidden;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 /* Mobile header */
 .mobile-menu-btn {
